@@ -23,6 +23,19 @@ export class InstanceManager {
         delete this.osuInstances[pid];
     }
 
+    /**
+     * gets a regular instance if osu running in normal mode, else gets tournament manager
+     */
+    public getInstance() {
+        if (Object.keys(this.osuInstances).length === 0) return;
+
+        for (const key in this.osuInstances) {
+            if (this.osuInstances[key].isTourneyManager)
+                return this.osuInstances[key];
+        }
+        return Object.values(this.osuInstances)[0];
+    }
+
     private handleProcesses() {
         try {
             const osuProcesses = Process.findProcesses('osu!.exe');

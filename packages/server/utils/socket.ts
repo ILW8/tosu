@@ -74,12 +74,12 @@ export class Websocket {
                 return;
             }
 
+            const instance = this.instanceManager.getInstance();
+
             if (this.clients.size > 0) {
                 try {
                     const message = JSON.stringify(
-                        osuInstances[0][this.stateFunctionName](
-                            this.instanceManager
-                        )
+                        instance[this.stateFunctionName](this.instanceManager)
                     );
 
                     this.clients.forEach((client) => client.send(message));
