@@ -1,17 +1,16 @@
 import path from 'path';
 
-import { DataRepo } from '@/entities/DataRepoList';
-import { LeaderboardPlayer as MemoryLeaderboardPlayer } from '@/entities/GamePlayData/Leaderboard';
-import { InstanceManager } from '@/objects/instanceManager/instanceManager';
-import { fixDecimals } from '@/utils/converters';
-import { getOsuModsString } from '@/utils/osuMods';
-
 import {
     ApiAnswer,
     LeaderboardPlayer,
     TourneyIpcClient,
     TourneyValues
-} from '../types/v1';
+} from '@/api/types/v1';
+import { LeaderboardPlayer as MemoryLeaderboardPlayer } from '@/entities/GamePlayData/Leaderboard';
+import { InstanceManager } from '@/objects/instanceManager/instanceManager';
+import { calculateAccuracy } from '@/utils/calculators';
+import { fixDecimals } from '@/utils/converters';
+import { getOsuModsString } from '@/utils/osuMods';
 
 const defaultLBPlayer = {
     name: '',
@@ -45,12 +44,13 @@ const convertMemoryPlayerToResult = (
     isPassing: Number(memoryPlayer.IsPassing)
 });
 
-export const buildResult = (
-    service: DataRepo,
-    instanceManager: InstanceManager
-): ApiAnswer => {
+export const buildResult = (instanceManager: InstanceManager): ApiAnswer => {
+    const osuInstance = instanceManager.getInstance();
+    if (!osuInstance) {
+        return { error: 'not_ready' };
+    }
+
     const {
-        settings,
         bassDensityData,
         allTimesData,
         menuData,
@@ -58,8 +58,7 @@ export const buildResult = (
         resultsScreenData,
         beatmapPpData,
         userProfile
-    } = service.getServices([
-        'settings',
+    } = osuInstance.getServices([
         'bassDensityData',
         'allTimesData',
         'menuData',
@@ -74,13 +73,22 @@ export const buildResult = (
             ? gamePlayData.Mods
             : allTimesData.MenuMods;
 
+    const resultScreenHits = {
+        300: resultsScreenData.Hit300,
+        geki: resultsScreenData.HitGeki,
+        100: resultsScreenData.Hit100,
+        katu: resultsScreenData.HitKatu,
+        50: resultsScreenData.Hit50,
+        0: resultsScreenData.HitMiss
+    };
+
     return {
         settings: {
             showInterface: allTimesData.ShowInterface,
             folders: {
-                game: settings.gameFolder,
-                skin: settings.skinFolder,
-                songs: settings.songsFolder
+                game: allTimesData.GameFolder,
+                skin: allTimesData.SkinFolder,
+                songs: allTimesData.SongsFolder
             }
         },
         menu: {
@@ -233,6 +241,10 @@ export const buildResult = (
             mode: gamePlayData.Mode,
             name: resultsScreenData.PlayerName,
             score: resultsScreenData.Score,
+            accuracy: calculateAccuracy({
+                hits: resultScreenHits,
+                mode: gamePlayData.Mode
+            }),
             maxCombo: resultsScreenData.MaxCombo,
             mods: {
                 num: resultsScreenData.Mods,
@@ -284,7 +296,7 @@ const buildTourneyData = (
         .sort((a, b) => a.ipcId - b.ipcId)
         .map<TourneyIpcClient>((instance, iterator) => {
             const { allTimesData, gamePlayData, tourneyUserProfileData } =
-                instance.entities.getServices([
+                instance.getServices([
                     'allTimesData',
                     'gamePlayData',
                     'tourneyUserProfileData'
@@ -346,7 +358,7 @@ const buildTourneyData = (
             };
         });
 
-    const { tourneyManagerData } = osuTourneyManager[0].entities.getServices([
+    const { tourneyManagerData } = osuTourneyManager[0].getServices([
         'tourneyManagerData'
     ]);
 

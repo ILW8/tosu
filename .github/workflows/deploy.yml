@@ -6,6 +6,7 @@ on:
     tags:
       - "v*"
     paths:
+      - ".github/workflows/**/*"
       - "packages/**/*"
       - "package.json"
       - "pnpm-lock.yaml"
@@ -44,11 +45,11 @@ jobs:
 
       - name: 🛠️ - Install Node
         uses: actions/setup-node@v3
-        with: { node-version: 18 }
+        with: { node-version: 20.11.1 }
 
       - name: 🛠️ - Install Rust
-        uses: ATiltedTree/setup-rust@v1
-        with: { rust-version: stable, components: clippy }
+        uses: moonrepo/setup-rust@v1
+        with: { components: clippy }
 
       - name: 🛠️ - Install Deps
         run: npm install -g pnpm@^8 && pnpm install --frozen-lockfile
@@ -58,7 +59,7 @@ jobs:
 
       - name: 🚀 - Upload artifacts for windows
         if: matrix.os == 'windows-latest'
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with: {
           name: "tosu-${{ matrix.os }}-${{ steps.set-pr-sha.outputs.SHORT_PR_SHA || github.ref_name }}",
           path: packages/tosu/dist/tosu.exe

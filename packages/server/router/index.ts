@@ -1,43 +1,40 @@
 import { Beatmap, Calculator } from '@kotrikd/rosu-pp';
 import {
-    config,
     downloadFile,
+    getCachePath,
+    getStaticPath,
     unzip,
     wLogger,
     writeConfig
 } from '@tosu/common';
+import { autoUpdater } from '@tosu/updater';
 import { exec } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
-import { Server, getContentType, sendJson } from '../index';
+import { Server, sendJson } from '../index';
 import {
     buildExternalCounters,
     buildInstructionLocal,
     buildLocalCounters,
-    buildSettings
+    buildSettings,
+    parseSettings,
+    saveSettings
 } from '../utils/counters';
+import { ISettings } from '../utils/counters.types';
 import { directoryWalker } from '../utils/directories';
-
-const pkgAssetsPath =
-    'pkg' in process
-        ? path.join(__dirname, 'assets')
-        : path.join(__filename, '../../../assets');
-
-const pkgRunningFolder =
-    'pkg' in process ? path.dirname(process.execPath) : process.cwd();
+import { parseCounterSettings } from '../utils/parseSettings';
 
 export default function buildBaseApi(server: Server) {
     server.app.route('/json', 'GET', (req, res) => {
-        const osuInstances: any = Object.values(
-            req.instanceManager.osuInstances || {}
-        );
-        if (osuInstances.length < 1) {
+        const osuInstance: any = req.instanceManager.getInstance();
+        if (!osuInstance) {
             res.statusCode = 500;
+            wLogger.debug('/json', 'not_ready');
             return sendJson(res, { error: 'not_ready' });
         }
 
-        const json = osuInstances[0].getState(req.instanceManager);
+        const json = osuInstance.getState(req.instanceManager);
         sendJson(res, json);
     });
 
@@ -57,6 +54,7 @@ export default function buildBaseApi(server: Server) {
                 return buildLocalCounters(res, query);
             } catch (error) {
                 wLogger.error((error as any).message);
+                wLogger.debug(error);
 
                 return sendJson(res, {
                     error: (error as any).message
@@ -76,10 +74,8 @@ export default function buildBaseApi(server: Server) {
                 });
             }
 
-            const cacheFolder = path.join(pkgRunningFolder, '.cache');
-            const staticPath =
-                config.staticFolderPath ||
-                path.join(pkgRunningFolder, 'static');
+            const cacheFolder = getCachePath();
+            const staticPath = getStaticPath();
             const folderPath = path.join(staticPath, decodeURI(folderName));
 
             const tempPath = path.join(cacheFolder, `${Date.now()}.zip`);
@@ -97,7 +93,7 @@ export default function buildBaseApi(server: Server) {
                     unzip(result, folderPath)
                         .then(() => {
                             wLogger.info(
-                                `PP Counter downloaded: ${folderName}`
+                                `PP Counter downloaded: ${folderName} (${req.headers.referer})`
                             );
                             fs.unlinkSync(tempPath);
 
@@ -108,6 +104,10 @@ export default function buildBaseApi(server: Server) {
                         })
                         .catch((reason) => {
                             fs.unlinkSync(tempPath);
+                            wLogger.debug(
+                                `counter-${folderName}-unzip`,
+                                reason
+                            );
 
                             sendJson(res, {
                                 error: reason
@@ -118,12 +118,15 @@ export default function buildBaseApi(server: Server) {
                 downloadFile(req.params.url, tempPath)
                     .then(startUnzip)
                     .catch((reason) => {
+                        wLogger.debug(`counter-${folderName}-download`, reason);
+
                         sendJson(res, {
                             error: reason
                         });
                     });
             } catch (error) {
                 wLogger.error((error as any).message);
+                wLogger.debug(error);
 
                 sendJson(res, {
                     error: (error as any).message
@@ -144,9 +147,7 @@ export default function buildBaseApi(server: Server) {
                     });
                 }
 
-                const staticPath =
-                    config.staticFolderPath ||
-                    path.join(pkgRunningFolder, 'static');
+                const staticPath = getStaticPath();
                 const folderPath = path.join(staticPath, decodeURI(folderName));
 
                 if (!fs.existsSync(folderPath)) {
@@ -159,11 +160,15 @@ export default function buildBaseApi(server: Server) {
                 // mac exec(`open "${path}"`, (err, stdout, stderr) => {
                 // linux exec(`xdg-open "${path}"`, (err, stdout, stderr) => {
 
-                wLogger.info(`PP Counter opened: ${folderName}`);
+                wLogger.info(
+                    `PP Counter opened: ${folderName} (${req.headers.referer})`
+                );
 
                 exec(`start "" "${folderPath}"`, (err) => {
                     if (err) {
                         wLogger.error('Error opening file explorer:');
+                        wLogger.debug(err);
+
                         return sendJson(res, {
                             error: `Error opening file explorer: ${err.message}`
                         });
@@ -193,9 +198,7 @@ export default function buildBaseApi(server: Server) {
                     });
                 }
 
-                const staticPath =
-                    config.staticFolderPath ||
-                    path.join(pkgRunningFolder, 'static');
+                const staticPath = getStaticPath();
                 const folderPath = path.join(staticPath, decodeURI(folderName));
 
                 if (!fs.existsSync(folderPath)) {
@@ -204,7 +207,9 @@ export default function buildBaseApi(server: Server) {
                     });
                 }
 
-                wLogger.info(`PP Counter removed: ${folderName}`);
+                wLogger.info(
+                    `PP Counter removed: ${folderName} (${req.headers.referer})`
+                );
 
                 fs.rmSync(folderPath, { recursive: true, force: true });
                 return sendJson(res, {
@@ -217,6 +222,139 @@ export default function buildBaseApi(server: Server) {
             }
         }
     );
+
+    server.app.route(
+        /^\/api\/counters\/settings\/(?<name>.*)/,
+        'GET',
+        (req, res) => {
+            try {
+                const folderName = req.params.name;
+                if (!folderName) {
+                    return sendJson(res, {
+                        error: 'No folder name'
+                    });
+                }
+
+                const settings = parseCounterSettings(folderName, 'parse');
+                if (settings instanceof Error) {
+                    wLogger.debug(
+                        `counter-${folderName}-settings-get`,
+                        settings
+                    );
+
+                    return sendJson(res, {
+                        error: settings.name
+                    });
+                }
+
+                wLogger.info(
+                    `Settings accessed: ${folderName} (${req.headers.referer})`
+                );
+
+                const html = parseSettings(settings.settings, folderName);
+                if (html instanceof Error) {
+                    wLogger.debug(`counter-${folderName}-settings-html`, html);
+
+                    return sendJson(res, {
+                        error: html
+                    });
+                }
+
+                return sendJson(res, { result: html });
+            } catch (error) {
+                return sendJson(res, {
+                    error: (error as any).message
+                });
+            }
+        }
+    );
+
+    server.app.route(
+        /^\/api\/counters\/settings\/(?<name>.*)/,
+        'POST',
+        (req, res) => {
+            let body: ISettings[];
+            try {
+                body = JSON.parse(req.body);
+            } catch (error) {
+                return sendJson(res, {
+                    error: (error as any).message
+                });
+            }
+
+            try {
+                const folderName = req.params.name;
+                if (!folderName) {
+                    return sendJson(res, {
+                        error: 'no folder name'
+                    });
+                }
+
+                if (req.query.update === 'yes') {
+                    const result = parseCounterSettings(
+                        folderName,
+                        'dev/save',
+                        body as any
+                    );
+
+                    if (!(result instanceof Error)) {
+                        wLogger.info(
+                            `Settings re:created: ${folderName} (${req.headers.referer})`
+                        );
+
+                        fs.writeFileSync(
+                            result.settingsPath,
+                            JSON.stringify(result.settings),
+                            'utf8'
+                        );
+                    }
+                }
+
+                wLogger.info(
+                    `Settings saved: ${folderName} (${req.headers.referer})`
+                );
+
+                const html = saveSettings(folderName, body as any);
+                if (html instanceof Error) {
+                    wLogger.debug(`counter-${folderName}-settings-save`, html);
+
+                    return sendJson(res, {
+                        error: html.name
+                    });
+                }
+
+                server.WS_COMMANDS.socket.emit(
+                    'message',
+                    `getSettings:${folderName}`
+                );
+
+                return sendJson(res, { result: 'success' });
+            } catch (error) {
+                return sendJson(res, {
+                    error: (error as any).message
+                });
+            }
+        }
+    );
+
+    server.app.route('/api/runUpdates', 'GET', async (req, res) => {
+        try {
+            const result = await autoUpdater();
+            if (result instanceof Error) {
+                sendJson(res, { result: result.name });
+                return;
+            }
+
+            sendJson(res, { result: 'updated' });
+        } catch (exc) {
+            wLogger.error('runUpdates', (exc as any).message);
+            wLogger.debug('runUpdates', exc);
+
+            return sendJson(res, {
+                error: (exc as any).message
+            });
+        }
+    });
 
     server.app.route('/api/settingsSave', 'POST', (req, res) => {
         let body: object;
@@ -235,86 +373,25 @@ export default function buildBaseApi(server: Server) {
         });
     });
 
-    server.app.route(/^\/images\/(?<filePath>.*)/, 'GET', (req, res) => {
-        fs.readFile(
-            path.join(pkgAssetsPath, 'images', req.params.filePath),
-            (err, content) => {
-                if (err) {
-                    wLogger.debug(err);
-                    res.writeHead(404, {
-                        'Content-Type': 'text/html'
-                    });
-                    res.end('<html>page not found</html>');
-                }
-                res.writeHead(200, {
-                    'Content-Type': getContentType(req.params.filePath)
-                });
-
-                res.end(content);
-            }
-        );
-    });
-
-    server.app.route('/homepage.min.css', 'GET', (req, res) => {
-        fs.readFile(
-            path.join(pkgAssetsPath, 'homepage.min.css'),
-            'utf8',
-            (err, content) => {
-                if (err) {
-                    wLogger.debug(err);
-                    res.writeHead(404, {
-                        'Content-Type': 'text/html'
-                    });
-                    res.end('<html>page not found</html>');
-                }
-                res.writeHead(200, {
-                    'Content-Type': getContentType('homepage.min.css')
-                });
-                res.end(content);
-            }
-        );
-    });
-
-    server.app.route('/homepage.js', 'GET', (req, res) => {
-        fs.readFile(
-            path.join(pkgAssetsPath, 'homepage.js'),
-            'utf8',
-            (err, content) => {
-                if (err) {
-                    wLogger.debug(err);
-                    res.writeHead(404, {
-                        'Content-Type': 'text/html'
-                    });
-                    res.end('<html>page not found</html>');
-                }
-                res.writeHead(200, {
-                    'Content-Type': getContentType('homepage.js')
-                });
-                res.end(content);
-            }
-        );
-    });
-
     server.app.route('/api/calculate/pp', 'GET', (req, res) => {
         try {
             const query: any = req.query;
 
-            const osuInstances: any = Object.values(
-                req.instanceManager.osuInstances || {}
-            );
-            if (osuInstances.length < 1) {
+            const osuInstance: any = req.instanceManager.getInstance();
+            if (!osuInstance) {
                 res.statusCode = 500;
                 return sendJson(res, { error: 'not_ready' });
             }
 
-            const { settings, menuData } = osuInstances[0].entities.getServices(
-                ['settings', 'menuData']
-            );
+            const { allTimesData, menuData } = osuInstance.getServices([
+                'allTimesData',
+                'menuData'
+            ]);
 
             const beatmapFilePath =
                 query.path ||
                 path.join(
-                    settings.gameFolder,
+                    allTimesData.GameFolder,
                     'Songs',
                     menuData.Folder,
                     menuData.Path
@@ -337,9 +414,12 @@ export default function buildBaseApi(server: Server) {
                 attributes: calculator.mapAttributes(parseBeatmap),
                 performance: calculator.performance(parseBeatmap)
             });
-        } catch (error) {
+        } catch (exc) {
+            wLogger.error('calculate/pp', (exc as any).message);
+            wLogger.debug('calculate/pp', exc);
+
             return sendJson(res, {
-                error: (error as any).message
+                error: (exc as any).message
             });
         }
     });
@@ -347,9 +427,7 @@ export default function buildBaseApi(server: Server) {
     server.app.route(/.*/, 'GET', (req, res) => {
         try {
             const url = req.pathname || '/';
-            const folderPath =
-                config.staticFolderPath ||
-                path.join(pkgRunningFolder, 'static');
+            const staticPath = getStaticPath();
 
             if (url === '/') {
                 if (req.query?.tab === '1') {
@@ -381,9 +459,11 @@ export default function buildBaseApi(server: Server) {
                 res,
                 baseUrl: url,
                 pathname: selectIndexHTML,
-                folderPath
+                folderPath: staticPath
             });
         } catch (error) {
+            wLogger.debug(error);
+
             return sendJson(res, {
                 error: (error as any).message
             });

@@ -1,7 +1,8 @@
 {
   "author": "Mikhail Babynichev",
   "license": "GPL-3.0",
-  "version": "2.5.0",
+  "version": "2.7.0",
+  "packageManager": "pnpm@8.15.4",
   "scripts": {
     "prepare": "husky install",
     "start": "pnpm run -C packages/tosu run:dev",
@@ -43,6 +44,6 @@
     "url": "https://github.com/KotRikD/tosu/issues"
   },
   "engines": {
-    "node": ">=18.14.2"
+    "node": ">=20.11.1"
   }
 }

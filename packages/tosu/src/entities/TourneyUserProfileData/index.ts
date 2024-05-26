@@ -1,6 +1,6 @@
 import { wLogger } from '@tosu/common';
 
-import { AbstractEntity } from '../AbstractEntity';
+import { AbstractEntity } from '@/entities/AbstractEntity';
 
 export class TourneyUserProfileData extends AbstractEntity {
     isDefaultState: boolean = true;
@@ -33,21 +33,25 @@ export class TourneyUserProfileData extends AbstractEntity {
     updateState() {
         wLogger.debug('TUPD(updateState) Starting');
 
-        const { process, gamePlayData, patterns } = this.services.getServices([
-            'process',
-            'gamePlayData',
-            'patterns'
-        ]);
+        const { process, gamePlayData, patterns } =
+            this.osuInstance.getServices([
+                'process',
+                'gamePlayData',
+                'patterns'
+            ]);
 
         const spectatingUserDrawable = process.readPointer(
             patterns.getPattern('spectatingUserPtr')
         );
         if (!spectatingUserDrawable) {
             wLogger.debug('TUPD(updateState) Slot is not equiped');
+
             this.resetState();
             gamePlayData.init();
             return;
         }
+
+        this.resetReportCount('TUPD(updateState) Slot');
 
         try {
             // UserDrawable + 0x4
@@ -72,8 +76,14 @@ export class TourneyUserProfileData extends AbstractEntity {
             this.UserID = process.readInt(spectatingUserDrawable + 0x70);
 
             this.isDefaultState = false;
+
+            this.resetReportCount('TUPD(updateState)');
         } catch (exc) {
-            wLogger.error('TUPD(updateState) signature failed');
+            this.reportError(
+                'TUPD(updateState)',
+                10,
+                `TUPD(updateState) ${(exc as any).message}`
+            );
             wLogger.debug(exc);
         }
 

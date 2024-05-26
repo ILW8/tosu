@@ -1,9 +1,10 @@
-import { wLogger } from '@tosu/common';
+import { config, sleep, wLogger } from '@tosu/common';
 
-import { AbstractEntity } from '../AbstractEntity';
+import { AbstractEntity } from '@/entities/AbstractEntity';
+
 import { ITourneyManagetChatItem } from './types';
 
-const TOURNAMENT_CHAT_ENGINE = '75 08 8D 65 F4 5B 5E 5F 5D C3 85 D2 74 72';
+const TOURNAMENT_CHAT_ENGINE = 'A1 ?? ?? ?? ?? 89 45 F0 8B D1 85 C9 75';
 
 export class TourneyManagerData extends AbstractEntity {
     ChatAreaAddr: number = 0;
@@ -26,7 +27,7 @@ export class TourneyManagerData extends AbstractEntity {
         try {
             wLogger.debug('TMD(updateState) Starting');
 
-            const { process, patterns } = this.services.getServices([
+            const { process, patterns } = this.osuInstance.getServices([
                 'process',
                 'patterns'
             ]);
@@ -42,7 +43,8 @@ export class TourneyManagerData extends AbstractEntity {
             }
 
             if (this.ChatAreaAddr === 0) {
-                this.ChatAreaAddr = await process.scanAsync(
+                await sleep(1000);
+                this.ChatAreaAddr = process.scanSync(
                     TOURNAMENT_CHAT_ENGINE,
                     true
                 );
@@ -82,7 +84,7 @@ export class TourneyManagerData extends AbstractEntity {
                 process.readInt(process.readInt(rulesetAddr + 0x34) + 0x4) + 0x4
             );
 
-            const channelsList = process.readPointer(this.ChatAreaAddr + 0x15);
+            const channelsList = process.readPointer(this.ChatAreaAddr + 0x1);
             const channelsItems = process.readInt(channelsList + 0x4);
 
             const channelsLength = process.readInt(channelsItems + 0x4);
@@ -90,66 +92,103 @@ export class TourneyManagerData extends AbstractEntity {
             // because osu creates 40 channels with language topics, lobby, osu, etc... (bancho announces this to you)
             // and 41 is commonly for multiplayer in tourney client
             for (let i = channelsLength - 1; i >= 0; i--) {
-                const current =
-                    channelsItems + patterns.getLeaderStart() + 0x4 * i;
-
-                const channelAddr = process.readInt(current);
-                if (channelAddr === 0) {
-                    continue;
-                }
-
-                const chatTag = process.readSharpString(
-                    process.readInt(channelAddr + 0x4)
-                );
-                if (chatTag !== '#multiplayer') {
-                    continue;
-                }
-
-                const result: ITourneyManagetChatItem[] = [];
-
-                const messagesAddr = process.readInt(channelAddr + 0x10);
-
-                const messagesItems = process.readInt(messagesAddr + 0x4);
-                const messagesSize = process.readInt(messagesAddr + 0xc);
-
-                if (this.Messages.length === messagesSize) {
-                    // Not needed an update
-                    continue;
-                }
-
-                for (let i = 0; i < messagesSize; i++) {
+                try {
                     const current =
-                        messagesItems + patterns.getLeaderStart() + 0x4 * i;
-                    const currentItem = process.readInt(current);
+                        channelsItems + patterns.getLeaderStart() + 0x4 * i;
 
-                    // [Base + 0x4]
-                    const content = process.readSharpString(
-                        process.readInt(currentItem + 0x4)
-                    );
-                    // NOTE: Check for empty, and !mp commands
-                    if (content === '' || content.startsWith('!mp')) {
+                    const channelAddr = process.readInt(current);
+                    if (channelAddr === 0) {
                         continue;
                     }
-                    // [Base + 0x8]
-                    const timeName = process.readSharpString(
-                        process.readInt(currentItem + 0x8)
+
+                    const chatTag = process.readSharpString(
+                        process.readInt(channelAddr + 0x4)
                     );
-                    const [time, name] = timeName.split(' ');
+                    if (chatTag !== '#multiplayer') {
+                        continue;
+                    }
 
-                    result.push({
-                        time: time.trim(),
-                        name: name.substring(0, name.length - 1),
-                        content
-                    });
+                    const result: ITourneyManagetChatItem[] = [];
+
+                    const messagesAddr = process.readInt(channelAddr + 0x10);
+
+                    const messagesItems = process.readInt(messagesAddr + 0x4);
+                    const messagesSize = process.readInt(messagesAddr + 0xc);
+
+                    if (this.Messages.length === messagesSize) {
+                        // Not needed an update
+                        continue;
+                    }
+
+                    for (let i = 0; i < messagesSize; i++) {
+                        try {
+                            const current =
+                                messagesItems +
+                                patterns.getLeaderStart() +
+                                0x4 * i;
+                            const currentItem = process.readInt(current);
+
+                            // [Base + 0x4]
+                            const content = process.readSharpString(
+                                process.readInt(currentItem + 0x4)
+                            );
+                            // NOTE: Check for empty, and !mp commands
+                            if (
+                                content === '' ||
+                                (!config.showMpCommands &&
+                                    content.startsWith('!mp'))
+                            ) {
+                                continue;
+                            }
+                            // [Base + 0x8]
+                            const timeName = process.readSharpString(
+                                process.readInt(currentItem + 0x8)
+                            );
+                            const [time] = timeName.split(' ');
+
+                            result.push({
+                                time: time.trim(),
+                                name: timeName
+                                    .replace(time, '')
+                                    .replace(/:$/, '')
+                                    .trimStart(),
+                                content
+                            });
+
+                            this.resetReportCount('TMD(chatMessage)');
+                        } catch (exc) {
+                            this.reportError(
+                                'TMD(chatMessage)',
+                                10,
+                                `TMD(chatMessage) ${(exc as any).message}`
+                            );
+                            wLogger.debug(exc);
+                        }
+                    }
+
+                    this.Messages = result;
+                    wLogger.debug('TMD(updateState) Chat Updated');
+
+                    this.resetReportCount('TMD(channelUpdate)');
+                } catch (exc) {
+                    this.reportError(
+                        'TMD(channelUpdate)',
+                        10,
+                        `TMD(channelUpdate) ${(exc as any).message}`
+                    );
+                    wLogger.debug(exc);
                 }
-
-                this.Messages = result;
-                wLogger.debug('TMD(updateState) Chat Updated');
             }
 
             wLogger.debug('TMD(updateState) updated');
+
+            this.resetReportCount('TMD(updateState)');
         } catch (exc) {
-            wLogger.error(`TMD(updateState) ${(exc as any).message}`);
+            this.reportError(
+                'TMD(updateState)',
+                10,
+                `TMD(updateState) ${(exc as any).message}`
+            );
             wLogger.debug(exc);
         }
     }

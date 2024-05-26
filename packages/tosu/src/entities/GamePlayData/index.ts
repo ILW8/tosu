@@ -2,13 +2,12 @@ import { Calculator } from '@kotrikd/rosu-pp';
 import { config, wLogger } from '@tosu/common';
 import { Process } from 'tsprocess/dist/process';
 
-import { DataRepo } from '@/entities/DataRepoList';
+import { AbstractEntity } from '@/entities/AbstractEntity';
 import { Leaderboard } from '@/entities/GamePlayData/Leaderboard';
+import { MenuData } from '@/entities/MenuData';
+import { OsuInstance } from '@/objects/instanceManager/osuInstance';
 import { calculateGrade, calculatePassedObjects } from '@/utils/calculators';
 import { OsuMods } from '@/utils/osuMods.types';
-
-import { AbstractEntity } from '../AbstractEntity';
-import { MenuData } from '../MenuData';
 
 export interface KeyOverlay {
     K1Pressed: boolean;
@@ -54,9 +53,10 @@ export class GamePlayData extends AbstractEntity {
     isReplayUiHidden: boolean;
 
     private scoreBase: number = 0;
+    private cachedkeys: string = '';
 
-    constructor(services: DataRepo) {
-        super(services);
+    constructor(osuInstance: OsuInstance) {
+        super(osuInstance);
 
         this.init();
     }
@@ -134,7 +134,7 @@ export class GamePlayData extends AbstractEntity {
     updateState() {
         try {
             const { process, patterns, allTimesData, menuData } =
-                this.services.getServices([
+                this.osuInstance.getServices([
                     'process',
                     'patterns',
                     'allTimesData',
@@ -256,7 +256,6 @@ export class GamePlayData extends AbstractEntity {
             this.ComboPrev = this.Combo;
 
             // [[[Ruleset + 0x68] + 0x38] + 0x38]
-
             this.updateLeaderboard(
                 process,
                 patterns.getLeaderStart(),
@@ -264,15 +263,21 @@ export class GamePlayData extends AbstractEntity {
             );
             this.updateGrade(menuData);
             this.updateStarsAndPerformance();
+
+            this.resetReportCount('GD(updateState)');
         } catch (exc) {
-            wLogger.error(`GPD(updateState) ${(exc as any).message}`);
+            this.reportError(
+                'GD(updateState)',
+                10,
+                `GD(updateState) ${(exc as any).message}`
+            );
             wLogger.debug(exc);
         }
     }
 
     updateKeyOverlay() {
         try {
-            const { process, patterns } = this.services.getServices([
+            const { process, patterns } = this.osuInstance.getServices([
                 'process',
                 'patterns'
             ]);
@@ -285,10 +290,10 @@ export class GamePlayData extends AbstractEntity {
                 return;
             }
 
-            const keyOverlayPtr = process.readInt(rulesetAddr + 0xb0);
-            if (keyOverlayPtr === 0 || keyOverlayPtr < 127) {
+            const keyOverlayPtr = process.readUInt(rulesetAddr + 0xb0);
+            if (keyOverlayPtr === 0) {
                 wLogger.debug(
-                    `GD(updateKeyOverlay) keyOverlayPtr is zero ${keyOverlayPtr} (${rulesetAddr}  -  ${patterns.getPattern(
+                    `GD(updateKeyOverlay) keyOverlayPtr is zero [${keyOverlayPtr}] (${rulesetAddr}  -  ${patterns.getPattern(
                         'rulesetsAddr'
                     )})`
                 );
@@ -300,9 +305,7 @@ export class GamePlayData extends AbstractEntity {
                 process.readInt(keyOverlayPtr + 0x10) + 0x4
             );
             if (keyOverlayArrayAddr === 0) {
-                wLogger.debug(
-                    'GD(updateKeyOverlay) keyOverlayArrayAddr is zero'
-                );
+                wLogger.debug('GD(updateKeyOverlay) keyOverlayAddr[] is zero');
                 return;
             }
 
@@ -327,12 +330,20 @@ export class GamePlayData extends AbstractEntity {
             this.KeyOverlay = keys;
             this.isKeyOverlayDefaultState = false;
 
-            wLogger.debug(
-                `GD(updateKeyOverlay) updated (${rulesetAddr} ${keyOverlayArrayAddr}) ${keys.K1Count}:${keys.K2Count}:${keys.M1Count}:${keys.M2Count}`
-            );
+            const keysLine = `${keys.K1Count}:${keys.K2Count}:${keys.M1Count}:${keys.M2Count}`;
+            if (this.cachedkeys !== keysLine) {
+                wLogger.debug(
+                    `GD(updateKeyOverlay) updated (${rulesetAddr} ${keyOverlayArrayAddr}) ${keysLine}`
+                );
+                this.cachedkeys = keysLine;
+            }
+
+            this.resetReportCount('GD(updateKeyOverlay)');
         } catch (exc) {
-            wLogger.error(
-                'GD(updateKeyOverlay) error happend while keyboard overlay attempted to parse'
+            this.reportError(
+                'GD(updateKeyOverlay)',
+                10,
+                `GD(updateKeyOverlay) ${(exc as any).message}`
             );
             wLogger.debug(exc);
         }
@@ -401,7 +412,7 @@ export class GamePlayData extends AbstractEntity {
         try {
             if (this.scoreBase === 0 || !this.scoreBase) return [];
 
-            const { process, patterns } = this.services.getServices([
+            const { process, patterns } = this.osuInstance.getServices([
                 'process',
                 'patterns',
                 'allTimesData',
@@ -410,26 +421,29 @@ export class GamePlayData extends AbstractEntity {
 
             const leaderStart = patterns.getLeaderStart();
 
-            const errors: Array<number> = [];
-
             const base = process.readInt(this.scoreBase + 0x38);
             const items = process.readInt(base + 0x4);
             const size = process.readInt(base + 0xc);
 
-            for (let i = 0; i < size; i++) {
+            for (let i = this.HitErrors.length - 1; i < size; i++) {
                 const current = items + leaderStart + 0x4 * i;
                 const error = process.readInt(current);
 
-                errors.push(error);
+                this.HitErrors.push(error);
             }
 
-            this.HitErrors = errors;
+            this.resetReportCount('GD(updateHitErrors)');
         } catch (exc) {
-            wLogger.error('GD(updateHitErrors) failed to parse hitErrors');
+            this.reportError(
+                'GD(updateHitErrors)',
+                10,
+                `GD(updateHitErrors) ${(exc as any).message}`
+            );
             wLogger.debug(exc);
         }
     }
 
+    // IMPROVE, WE DONT NEED TO SUM EVERY HITERROR EACH TIME (for future)
     private calculateUR(): number {
         if (this.HitErrors.length < 1) {
             return 0;
@@ -490,18 +504,31 @@ export class GamePlayData extends AbstractEntity {
         leaderStart: number,
         rulesetAddr: number
     ) {
-        // [Ruleset + 0x7C]
-        const leaderBoardBase = process.readInt(rulesetAddr + 0x7c);
+        try {
+            // [Ruleset + 0x7C]
+            const leaderBoardBase = process.readInt(rulesetAddr + 0x7c);
 
-        // [Ruleset + 0x7C] + 0x24
-        const leaderBoardAddr =
-            leaderBoardBase > 0 ? process.readInt(leaderBoardBase + 0x24) : 0;
-        if (!this.Leaderboard) {
-            this.Leaderboard = new Leaderboard(process, leaderBoardAddr);
-        } else {
-            this.Leaderboard.updateBase(leaderBoardAddr);
+            // [Ruleset + 0x7C] + 0x24
+            const leaderBoardAddr =
+                leaderBoardBase > 0
+                    ? process.readInt(leaderBoardBase + 0x24)
+                    : 0;
+            if (!this.Leaderboard) {
+                this.Leaderboard = new Leaderboard(process, leaderBoardAddr);
+            } else {
+                this.Leaderboard.updateBase(leaderBoardAddr);
+            }
+            this.Leaderboard.readLeaderboard(leaderStart);
+
+            this.resetReportCount('GD(updateLeaderboard)');
+        } catch (exc) {
+            this.reportError(
+                'GD(updateLeaderboard)',
+                10,
+                `GD(updateLeaderboard) ${(exc as any).message}`
+            );
+            wLogger.debug(exc);
         }
-        this.Leaderboard.readLeaderboard(leaderStart);
     }
 
     private updateStarsAndPerformance() {
@@ -512,12 +539,12 @@ export class GamePlayData extends AbstractEntity {
             return;
         }
 
-        const { settings, beatmapPpData } = this.services.getServices([
-            'settings',
+        const { allTimesData, beatmapPpData } = this.osuInstance.getServices([
+            'allTimesData',
             'beatmapPpData'
         ]);
 
-        if (!settings.gameFolder) {
+        if (!allTimesData.GameFolder) {
             wLogger.debug(
                 'GD(updateStarsAndPerformance) game folder not found'
             );
@@ -555,10 +582,8 @@ export class GamePlayData extends AbstractEntity {
         );
         const fcPerformance = new Calculator({
             mods: this.Mods,
-            nMisses: this.HitMiss,
-            n50: this.Hit50,
-            n100: this.Hit100,
-            n300: this.Hit300
+            nMisses: 0,
+            acc: this.Accuracy
         }).performance(currentBeatmap);
 
         beatmapPpData.updateCurrentAttributes(

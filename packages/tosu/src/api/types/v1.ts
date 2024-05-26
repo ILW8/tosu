@@ -209,6 +209,7 @@ export interface ResultsScreenValues {
     mode: number;
     name: string;
     score: number;
+    accuracy: number;
     maxCombo: number;
     mods: SelectedMods;
     '300': number;
@@ -313,7 +314,7 @@ export interface UserProfileAnswer {
     backgroundColour: string;
 }
 
-export interface ApiAnswer {
+export interface GosuCompatibleApi {
     settings: InSettingsValues;
     menu: InMenuValues;
     gameplay: GameplayValues;
@@ -321,3 +322,5 @@ export interface ApiAnswer {
     userProfile: UserProfileAnswer;
     tourney?: TourneyValues;
 }
+
+export type ApiAnswer = GosuCompatibleApi | { error?: string };

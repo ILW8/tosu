@@ -2,6 +2,7 @@ import * as dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
 
+import { checkGameOverlayConfig } from './gosu';
 import { wLogger } from './logger';
 
 const configPath = path.join(
@@ -22,12 +23,16 @@ const createConfig = () => {
 CALCULATE_PP=true
 # Enables/disables reading K1/K2/M1/M2 keys on the keyboard
 ENABLE_KEY_OVERLAY=true
+ENABLE_AUTOUPDATE=true
 
 # Reference: 1 second = 1000 milliseconds
 # Once in what value, the programme should read the game values (in milliseconds)
 POLL_RATE=100
 # Once per value, the programme should read the values of keys K1/K2/M1/M2 (in milliseconds)
 PRECISE_DATA_POLL_RATE=100
+
+# Shows !mp commands (messages starting with '!mp') in tournament manager chat (hidden by default)
+SHOW_MP_COMMANDS=false
 
 # Enables/disables the in-game gosumemory overlay (!!!I AM NOT RESPONSIBLE FOR USING IT!!!).
 ENABLE_GOSU_OVERLAY=false
@@ -37,6 +42,7 @@ ENABLE_GOSU_OVERLAY=false
 # Enables logs for tosu developers, not very intuitive for you, the end user.
 # best not to include without developer's request.
 DEBUG_LOG=false
+OPEN_DASHBOARD_ON_STARTUP=false
 
 # IP address where the websocket api server will be registered
 # 127.0.0.1 = localhost
@@ -54,6 +60,9 @@ STATIC_FOLDER_PATH=./static`,
 dotenv.config({ path: configPath });
 
 export const config = {
+    enableAutoUpdate: (process.env.ENABLE_AUTOUPDATE || 'true') === 'true',
+    openDashboardOnStartup:
+        (process.env.OPEN_DASHBOARD_ON_STARTUP || '') === 'true',
     debugLogging: (process.env.DEBUG_LOG || '') === 'true',
     calculatePP: (process.env.CALCULATE_PP || '') === 'true',
     enableKeyOverlay: (process.env.ENABLE_KEY_OVERLAY || '') === 'true',
@@ -63,11 +72,14 @@ export const config = {
             process.env.KEYOVERLAY_POLL_RATE ||
             '100'
     ),
+    showMpCommands: (process.env.SHOW_MP_COMMANDS || '') === 'true',
     serverIP: process.env.SERVER_IP || '127.0.0.1',
     serverPort: Number(process.env.SERVER_PORT || '24050'),
     staticFolderPath: process.env.STATIC_FOLDER_PATH || './static',
     enableGosuOverlay: (process.env.ENABLE_GOSU_OVERLAY || '') === 'true',
-    timestamp: 0
+    timestamp: 0,
+    currentVersion: '',
+    updateVersion: ''
 };
 
 export const updateConfigFile = () => {
@@ -98,6 +110,11 @@ export const updateConfigFile = () => {
         fs.appendFileSync(configPath, '\n\nPRECISE_DATA_POLL_RATE=100', 'utf8');
     }
 
+    if (!process.env.SHOW_MP_COMMANDS) {
+        newOptions += 'SHOW_MP_COMMANDS, ';
+        fs.appendFileSync(configPath, '\nSHOW_MP_COMMANDS=false', 'utf8');
+    }
+
     if (!process.env.SERVER_IP) {
         newOptions += 'SERVER_IP, ';
         fs.appendFileSync(configPath, '\nSERVER_IP=127.0.0.1', 'utf8');
@@ -116,6 +133,20 @@ export const updateConfigFile = () => {
     if (!process.env.ENABLE_GOSU_OVERLAY) {
         newOptions += 'ENABLE_GOSU_OVERLAY, ';
         fs.appendFileSync(configPath, '\nENABLE_GOSU_OVERLAY=false', 'utf8');
+    }
+
+    if (!process.env.ENABLE_AUTOUPDATE) {
+        newOptions += 'ENABLE_AUTOUPDATE, ';
+        fs.appendFileSync(configPath, '\nENABLE_AUTOUPDATE=true', 'utf8');
+    }
+
+    if (!process.env.OPEN_DASHBOARD_ON_STARTUP) {
+        newOptions += 'OPEN_DASHBOARD_ON_STARTUP, ';
+        fs.appendFileSync(
+            configPath,
+            '\nOPEN_DASHBOARD_ON_STARTUP=false',
+            'utf8'
+        );
     }
 
     if (newOptions !== '') {
@@ -161,6 +192,8 @@ export const refreshConfig = (httpServer: any, refresh: boolean) => {
         return;
     }
 
+    const enableAutoUpdate = (parsed.ENABLE_AUTOUPDATE || '') === 'true';
+    const openDashboard = (parsed.OPEN_DASHBOARD || '') === 'true';
     const debugLogging = (parsed.DEBUG_LOG || '') === 'true';
     const serverIP = parsed.SERVER_IP || '127.0.0.1';
     const serverPort = Number(parsed.SERVER_PORT || '24050');
@@ -170,16 +203,20 @@ export const refreshConfig = (httpServer: any, refresh: boolean) => {
     const preciseDataPollRate = Number(
         parsed.PRECISE_DATA_POLL_RATE || parsed.KEYOVERLAY_POLL_RATE || '100'
     );
+    const showMpCommands = (parsed.SHOW_MP_COMMANDS || '') === 'true';
     const staticFolderPath = parsed.STATIC_FOLDER_PATH || './static';
     const enableGosuOverlay = (parsed.ENABLE_GOSU_OVERLAY || '') === 'true';
 
     // determine whether config actually was updated or not
     updated =
+        config.enableAutoUpdate !== enableAutoUpdate ||
+        config.openDashboardOnStartup !== openDashboard ||
         config.debugLogging !== debugLogging ||
         config.calculatePP !== calculatePP ||
         config.enableKeyOverlay !== enableKeyOverlay ||
         config.pollRate !== pollRate ||
         config.preciseDataPollRate !== preciseDataPollRate ||
+        config.showMpCommands !== showMpCommands ||
         config.staticFolderPath !== staticFolderPath ||
         config.enableGosuOverlay !== enableGosuOverlay ||
         config.serverIP !== serverIP ||
@@ -192,21 +229,36 @@ export const refreshConfig = (httpServer: any, refresh: boolean) => {
         httpServer.restart();
     }
 
+    if (
+        config.pollRate !== pollRate ||
+        config.preciseDataPollRate !== preciseDataPollRate
+    ) {
+        config.pollRate = pollRate >= 0 ? pollRate : 100;
+        config.preciseDataPollRate =
+            preciseDataPollRate >= 0 ? preciseDataPollRate : 100;
+        httpServer.restartWS();
+    }
+
+    checkGameOverlayConfig();
+
     const osuInstances: any = Object.values(
         httpServer.instanceManager.osuInstances || {}
     );
-    if (osuInstances.length === 1 && enableGosuOverlay && updated) {
+    if (
+        osuInstances.length === 1 &&
+        enableGosuOverlay === true &&
+        updated === true
+    ) {
         osuInstances[0].injectGameOverlay();
     }
+
+    config.enableGosuOverlay = enableGosuOverlay;
 
     config.debugLogging = debugLogging;
     config.calculatePP = calculatePP;
     config.enableKeyOverlay = enableKeyOverlay;
-    config.pollRate = pollRate >= 0 ? pollRate : 100;
-    config.preciseDataPollRate =
-        preciseDataPollRate >= 0 ? preciseDataPollRate : 100;
+    config.showMpCommands = showMpCommands;
     config.staticFolderPath = staticFolderPath;
-    config.enableGosuOverlay = enableGosuOverlay;
 
     if (
         config.staticFolderPath === './static' &&
@@ -221,24 +273,20 @@ export const refreshConfig = (httpServer: any, refresh: boolean) => {
 export const writeConfig = (httpServer: any, options: any) => {
     let text = '';
 
-    text += `DEBUG_LOG=${options.DEBUG_LOG || config.debugLogging}\n\n`;
-    text += `CALCULATE_PP=${options.CALCULATE_PP || config.calculatePP}\n\n`;
-    text += `ENABLE_GOSU_OVERLAY=${
-        options.ENABLE_GOSU_OVERLAY || config.enableGosuOverlay
-    }\n`;
-    text += `ENABLE_KEY_OVERLAY=${
-        options.ENABLE_KEY_OVERLAY || config.enableKeyOverlay
-    }\n\n`;
-    text += `POLL_RATE=${options.POLL_RATE || config.pollRate}\n`;
-    text += `PRECISE_DATA_POLL_RATE=${
-        options.PRECISE_DATA_POLL_RATE || config.preciseDataPollRate
-    }\n\n`;
-    text += `SERVER_IP=${options.SERVER_IP || config.serverIP}\n`;
-    text += `SERVER_PORT=${options.SERVER_PORT || config.serverPort}\n\n`;
-    text += `STATIC_FOLDER_PATH=${
-        options.STATIC_FOLDER_PATH || config.staticFolderPath
-    }\n`;
+    text += `DEBUG_LOG=${options.DEBUG_LOG ?? config.debugLogging}\n\n`;
+    text += `CALCULATE_PP=${options.CALCULATE_PP ?? config.calculatePP}\n\n`;
+    text += `ENABLE_AUTOUPDATE=${options.ENABLE_AUTOUPDATE ?? config.enableAutoUpdate}\n`;
+    text += `OPEN_DASHBOARD_ON_STARTUP=${options.OPEN_DASHBOARD_ON_STARTUP ?? config.openDashboardOnStartup}\n\n`;
+    text += `ENABLE_GOSU_OVERLAY=${options.ENABLE_GOSU_OVERLAY ?? config.enableGosuOverlay}\n`;
+    text += `ENABLE_KEY_OVERLAY=${options.ENABLE_KEY_OVERLAY ?? config.enableKeyOverlay}\n\n`;
+    text += `POLL_RATE=${options.POLL_RATE ?? config.pollRate}\n`;
+    text += `PRECISE_DATA_POLL_RATE=${options.PRECISE_DATA_POLL_RATE ?? config.preciseDataPollRate}\n\n`;
+    text += `SHOW_MP_COMMANDS=${options.SHOW_MP_COMMANDS ?? config.showMpCommands}\n\n`;
+    text += `SERVER_IP=${options.SERVER_IP ?? config.serverIP}\n`;
+    text += `SERVER_PORT=${options.SERVER_PORT ?? config.serverPort}\n\n`;
+    text += `STATIC_FOLDER_PATH=${options.STATIC_FOLDER_PATH ?? config.staticFolderPath}\n`;
 
-    fs.writeFileSync(configPath, text, 'utf8');
-    refreshConfig(httpServer, true);
+    fs.writeFile(configPath, text, 'utf8', () => {
+        refreshConfig(httpServer, true);
+    });
 };

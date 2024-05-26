@@ -1,19 +1,16 @@
 import { wLogger } from '@tosu/common';
 
-import { AbstractEntity } from '../AbstractEntity';
+import { AbstractEntity } from '@/entities/AbstractEntity';
 
 // yep each dto should have class!
 export class BassDensityData extends AbstractEntity {
     currentAudioVelocity: number = 0.0;
     density: number = 0.0;
 
-    private updateStateErrorAttempts: number = 0;
-
     updateState() {
         try {
-            const { process: osuProcess, patterns } = this.services.getServices(
-                ['process', 'patterns']
-            );
+            const { process: osuProcess, patterns } =
+                this.osuInstance.getServices(['process', 'patterns']);
             if (osuProcess === null) {
                 throw new Error('Process not found');
             }
@@ -73,15 +70,13 @@ export class BassDensityData extends AbstractEntity {
             this.currentAudioVelocity = currentAudioVelocity;
             this.density = (1 + currentAudioVelocity) * 0.5;
 
-            if (this.updateStateErrorAttempts !== 0) {
-                this.updateStateErrorAttempts = 0;
-            }
+            this.resetReportCount('BDD(updateState)');
         } catch (exc) {
-            this.updateStateErrorAttempts += 1;
-
-            if (this.updateStateErrorAttempts > 5) {
-                wLogger.error(`BDD(updateState) ${(exc as any).message}`);
-            }
+            this.reportError(
+                'BDD(updateState)',
+                10,
+                `BDD(updateState) ${(exc as any).message}`
+            );
             wLogger.debug(exc);
         }
     }

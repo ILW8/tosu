@@ -2,6 +2,107 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.7.0](https://github.com/KotRikD/tosu/compare/v2.6.3...v2.7.0) (2024-05-22)
+
+
+### Features
+
+* Add `SHOW_MP_COMMANDS` in dashboard ([943c111](https://github.com/KotRikD/tosu/commit/943c1116c6d04254005f73baf6aed88656c59aa3))
+* Add accuracy to `v1` & `v2` api ([49d5472](https://github.com/KotRikD/tosu/commit/49d547267d7349733cce76fc334409fb786c198f))
+
+
+### Bug Fixes
+
+* Fix beatmap status ([3d02ce7](https://github.com/KotRikD/tosu/commit/3d02ce774100958f5dd436f114264e9ee8e56e25))
+* prevent crash on autoupdater ([8b507db](https://github.com/KotRikD/tosu/commit/8b507dbab49c03c7e17103086648ecbeb8136b6d))
+
+### [2.6.3](https://github.com/KotRikD/tosu/compare/v2.6.2...v2.6.3) (2024-05-11)
+
+
+### Bug Fixes
+
+* (ATD)can't read int at x ([81b5575](https://github.com/KotRikD/tosu/commit/81b55751ca19e1d07d0a603fc1a7945583311137))
+* fixing that 3221226505 error code ([6eb6018](https://github.com/KotRikD/tosu/commit/6eb60181ed893885411c3bf8b96773fa16a94f29))
+
+### [2.6.2](https://github.com/KotRikD/tosu/compare/v2.6.1...v2.6.2) (2024-05-10)
+
+
+### Bug Fixes
+
+* Create `config.ini` on startup ([a5c1fe0](https://github.com/KotRikD/tosu/commit/a5c1fe0dcdb64a1c19f2bddd08c9298c1b0a7192))
+* gameTimePtr isn't available in tournament mode ([e71ddda](https://github.com/KotRikD/tosu/commit/e71ddda0ad789d15f6b72b5752723c23ad7858e3))
+
+### [2.6.1](https://github.com/KotRikD/tosu/compare/v2.6.0...v2.6.1) (2024-05-09)
+
+
+### Features
+
+* Functions print out errors when they repeat more than `x` time ([ad484df](https://github.com/KotRikD/tosu/commit/ad484dfe099dec4e450a642848c36eb73e04f3d2))
+
+
+### Bug Fixes
+
+* allow negative memory addresses ([88bda3d](https://github.com/KotRikD/tosu/commit/88bda3d64c237ee19e57229de267fef086143e1a))
+* Another attempt at fixing memory leak ([ba53d04](https://github.com/KotRikD/tosu/commit/ba53d046d3e58201e3e12d61b25ed4fa4c3c3fd5))
+* **entities:** Improve errors handling ([9b0707b](https://github.com/KotRikD/tosu/commit/9b0707b52ac75d834ca8251de371056d446fc2ee))
+* Favicon for dashboard ([9105692](https://github.com/KotRikD/tosu/commit/910569286e120bbe205f9c73c91b79da760c2c1d))
+* Fix Auto Updater ([ebea523](https://github.com/KotRikD/tosu/commit/ebea523bec71f4d2fead8f48b5a18b187865a94b))
+* Handle `undefined` in `path.join` ([836d36b](https://github.com/KotRikD/tosu/commit/836d36b96e678764d5dc8893eed2cd0243c2e32f))
+* Incorrect startup order ([367d7ba](https://github.com/KotRikD/tosu/commit/367d7ba6cc66e335e3243fc8cf55b020bb8457e7))
+
+## [2.6.0](https://github.com/KotRikD/tosu/compare/v2.5.2...v2.6.0) (2024-05-07)
+
+
+### Features
+
+* Added live update for counter settings (only from dashboard) ([56c477c](https://github.com/KotRikD/tosu/commit/56c477c48a33d6d7a1cbdf666862cf0afd83079c))
+* Added open dashboard & changed behaviour of autoupdate, added manual update (sort of) ([45850d5](https://github.com/KotRikD/tosu/commit/45850d5ec2cd829abf4e5e1f068dd2823d635724))
+* Added open dashboard & changed behaviour of autoupdate, added manual update (sort of) ([8ee0c30](https://github.com/KotRikD/tosu/commit/8ee0c30f0747df1a994983dfedeb6b983b9dff8d))
+* move to yao-pkg and bump node version ([3d6eb32](https://github.com/KotRikD/tosu/commit/3d6eb322aa3e99faa0e593f30813bfe936748bc1))
+* Sanitize Settings Title and Description ([ce747c9](https://github.com/KotRikD/tosu/commit/ce747c922114c704ac3bd46699d5cdda825923a2))
+* Settings builder for counters ([04106e7](https://github.com/KotRikD/tosu/commit/04106e79011e63c70a852029fd5833703236e62e))
+* Settings for a pp counter ([7c3c795](https://github.com/KotRikD/tosu/commit/7c3c795d24b04b24b3d4c3c589376b4580d3b461))
+* Settings for a pp counter ([d30db94](https://github.com/KotRikD/tosu/commit/d30db94fb797d4bd215b4ea55daed3c09c8d234b))
+* source of dashboard script ([#118](https://github.com/KotRikD/tosu/issues/118)) ([52f7b55](https://github.com/KotRikD/tosu/commit/52f7b55de8db59929ed68edc33c2e00fedbedc8f))
+
+
+### Bug Fixes
+
+* bump workflow node ([58c1fab](https://github.com/KotRikD/tosu/commit/58c1fab73b826a6e2ea9962bff1fbb5096ee5799))
+* change user profile pattern ([271be94](https://github.com/KotRikD/tosu/commit/271be941f23eb2d6fe9d19d2093e57ecd2b24fcf))
+* Config issues ([bfe7d82](https://github.com/KotRikD/tosu/commit/bfe7d82c011af452d845796be6a7789ff802fc7d))
+* dashboard design adjust ([3f5d01b](https://github.com/KotRikD/tosu/commit/3f5d01b38f11a968bdc4abeabbd41492746311fd))
+* Dashboard improvements ([d4f6613](https://github.com/KotRikD/tosu/commit/d4f6613ddab334cce4d75a39d868b682755808d1))
+* Dont crash on fetch error ([6762ec3](https://github.com/KotRikD/tosu/commit/6762ec39d3ccaeb0559e9f2d7436fcb1545b7303))
+* fix incorrectly returned images ([9eb93dc](https://github.com/KotRikD/tosu/commit/9eb93dcc468e879e93b8e44db42ea95efdbcf027))
+* Fix issue with counter settings flow ([d34ce62](https://github.com/KotRikD/tosu/commit/d34ce621d4762102507e04bba97f2b4c4ac35f7c))
+* Fix session playTime ([f286ef9](https://github.com/KotRikD/tosu/commit/f286ef9fd01eaa0c15e743fc87f7d40d82f13260))
+* Fix several counter settings issues ([04e242d](https://github.com/KotRikD/tosu/commit/04e242d326ae619c19fe41d59e11d8c4fc7b3cab))
+* Fix undefined properties in api v2 ([6598271](https://github.com/KotRikD/tosu/commit/6598271abfda67cdbb6a8fe22e8073a4858bc059))
+* Improve performance for precise data ([df19be7](https://github.com/KotRikD/tosu/commit/df19be701cbbb360e11ff589d5debd595f739f31))
+* Improve performance for precise data ([75f9eef](https://github.com/KotRikD/tosu/commit/75f9eef34b80d8d93b19a8eea18e810c7b85015a))
+* Move settings code to `Settings` Class instead of `allTimeData` Class ([cf8c5f2](https://github.com/KotRikD/tosu/commit/cf8c5f2e49f04919a4152f80f6edc63c1f50e6b8))
+* Return keybinds (hopefully no memory leak this time) ([507d75a](https://github.com/KotRikD/tosu/commit/507d75a716ad4e96fc18f7c85624b20cb344bd9b))
+* Use function to get statis folder path ([e118da7](https://github.com/KotRikD/tosu/commit/e118da74f218e36420e9105c25c0a26cae070683))
+
+### [2.5.2](https://github.com/KotRikD/tosu/compare/v2.5.1...v2.5.2) (2024-03-30)
+
+
+### Bug Fixes
+
+* Fix incorrect pp if fc ([8c50e00](https://github.com/KotRikD/tosu/commit/8c50e0022d0276cb08b575e07c99d19112cb905f))
+* Fix undefined which may crash program ([0872879](https://github.com/KotRikD/tosu/commit/0872879b0e3b8c22982433737cfb00675c739b06))
+
+### [2.5.1](https://github.com/KotRikD/tosu/compare/v2.5.0...v2.5.1) (2024-03-22)
+
+
+### Bug Fixes
+
+* Fix local counters path ([#104](https://github.com/KotRikD/tosu/issues/104)) ([cf32255](https://github.com/KotRikD/tosu/commit/cf322550915ae06662a3c3b873de26506142016f))
+* fix tournament manager process order ([70808b5](https://github.com/KotRikD/tosu/commit/70808b5eeca6f842338f2ea7d0f6648a74322f74))
+* format player name correctly ([d99b4da](https://github.com/KotRikD/tosu/commit/d99b4da286a83f72a5f4c854c6cecdbbd6fcbd16))
+* tournament ipcId wrong reading and potentional fix for chat ([3e8aee4](https://github.com/KotRikD/tosu/commit/3e8aee4d7d5e48a65569215ea0c6cbe969e683ff))
+
 ## [2.5.0](https://github.com/KotRikD/tosu/compare/v2.4.3...v2.5.0) (2024-03-10)
 
 

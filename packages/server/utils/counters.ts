@@ -1,9 +1,18 @@
-import { config, recursiveFilesSearch, wLogger } from '@tosu/common';
+import {
+    JsonSafeParse,
+    config,
+    getStaticPath,
+    recursiveFilesSearch,
+    sanitizeText,
+    wLogger
+} from '@tosu/common';
 import fs from 'fs';
 import http from 'http';
 import path from 'path';
+import semver from 'semver';
 
 import { getContentType } from '../utils';
+import { ICounter, ISettings, bodyPayload } from './counters.types';
 import {
     authorHTML,
     authorLinksHTML,
@@ -19,8 +28,11 @@ import {
     noMoreCounters,
     resultItemHTML,
     saveSettingsButtonHTML,
-    settingsItemHTML
+    selectHTML,
+    settingsItemHTML,
+    submitCounterHTML
 } from './htmls';
+import { parseCounterSettings } from './parseSettings';
 
 /**
  * ТАК КАК БЛЯТЬ У НАС В ЖЫЭСЕ
@@ -32,9 +44,6 @@ const pkgAssetsPath =
     'pkg' in process
         ? path.join(__dirname, 'assets')
         : path.join(__filename, '../../../assets');
-
-const pkgRunningFolder =
-    'pkg' in process ? path.dirname(process.execPath) : process.cwd();
 
 function splitTextByIndex(text, letter) {
     const index = text.indexOf(letter);
@@ -56,26 +65,47 @@ export function parseTXT(filePath: string) {
         const line = content[i];
         const result = splitTextByIndex(line, ':');
         let [key, value] = result;
-        if (key == null || value == null) continue;
+        if (
+            key === null ||
+            value === null ||
+            key === undefined ||
+            value === undefined
+        )
+            continue;
         value = value.split('##')[0].replace(/\r/, '').replace(':', '');
 
-        if (/[0-9-]+x[0-9-]+/.test(value)) {
-            object[key.toLowerCase()] = value.split('x');
+        if (/[0-9 ]+x[ 0-9-]+/.test(value)) {
+            object[key.toLowerCase()] = value.split(/x/i);
         } else object[key.toLowerCase()] = value.trim();
     }
 
     filePath = path.resolve(filePath);
-    const staticPath = path.resolve(config.staticFolderPath);
 
+    const staticPath = path.resolve(config.staticFolderPath);
     object.folderName = path
         .dirname(filePath.replace(staticPath, ''))
         .replace(/^(\\\\\\|\\\\|\\|\/|\/\/)/, '')
         .replace(/\\/gm, '/');
 
-    if (object.resolution) {
-        object.resolution = object.resolution.map((r) => r.trim());
-    }
+    const settingsPath = path.join(
+        staticPath,
+        object.folderName,
+        'settings.json'
+    );
+    const settings = fs.existsSync(settingsPath)
+        ? JsonSafeParse(fs.readFileSync(settingsPath, 'utf8'), [])
+        : [];
+
+    if (object.resolution)
+        object.resolution = object.resolution.map((r) => r.trim()) || [
+            'Any',
+            'Any'
+        ];
+    else object.resolution = ['Any', 'Any'];
+
     if (object.authorlinks) object.authorlinks = object.authorlinks.split(',');
+
+    object.settings = Array.isArray(settings) ? settings : [];
 
     delete object.compatiblewith;
     delete object.usecase;
@@ -83,26 +113,160 @@ export function parseTXT(filePath: string) {
     return object;
 }
 
+export function createSetting(setting: ISettings, value: any) {
+    const title = sanitizeText(setting.title);
+    const description = sanitizeText(setting.description);
+
+    switch (setting.type) {
+        case 'text': {
+            return settingsItemHTML
+                .replace('{NAME}', title)
+                .replace('{DESCRIPTION}', description)
+                .replace(
+                    '{INPUT}',
+                    inputHTML
+                        .replace('{TYPE}', 'text')
+                        .replace(/{ID}/gm, setting.uniqueID)
+                        .replace('{ADDON}', `ucs t="${setting.type}"`)
+                        .replace('{VALUE}', value)
+                );
+        }
+
+        case 'number': {
+            return settingsItemHTML
+                .replace('{NAME}', title)
+                .replace('{DESCRIPTION}', description)
+                .replace(
+                    '{INPUT}',
+                    inputHTML
+                        .replace('{TYPE}', 'number')
+                        .replace(/{ID}/gm, setting.uniqueID)
+                        .replace('{ADDON}', `ucs t="${setting.type}"`)
+                        .replace('{VALUE}', value)
+                );
+        }
+
+        case 'password': {
+            return settingsItemHTML
+                .replace('{NAME}', title)
+                .replace('{DESCRIPTION}', description)
+                .replace(
+                    '{INPUT}',
+                    inputHTML
+                        .replace('{TYPE}', 'password')
+                        .replace(/{ID}/gm, setting.uniqueID)
+                        .replace('{ADDON}', `ucs t="${setting.type}"`)
+                        .replace('{VALUE}', value)
+                );
+        }
+
+        case 'checkbox': {
+            return settingsItemHTML
+                .replace('{NAME}', title)
+                .replace('{DESCRIPTION}', description)
+                .replace(
+                    '{INPUT}',
+                    checkboxHTML
+                        .replace('{TYPE}', 'text')
+                        .replace(/{ID}/gm, setting.uniqueID)
+                        .replace(
+                            '{ADDON}',
+                            value
+                                ? `ucs t="${setting.type}" checked="true"`
+                                : `ucs t="${setting.type}"`
+                        )
+                        .replace('{VALUE}', `${value}`)
+                );
+        }
+
+        case 'color': {
+            return settingsItemHTML
+                .replace('{NAME}', title)
+                .replace('{DESCRIPTION}', description)
+                .replace(
+                    '{INPUT}',
+                    inputHTML
+                        .replace('{TYPE}', 'color')
+                        .replace(/{ID}/gm, setting.uniqueID)
+                        .replace('{ADDON}', `ucs t="${setting.type}"`)
+                        .replace('{VALUE}', value)
+                );
+        }
+
+        case 'options': {
+            const options = Array.isArray(setting.options)
+                ? setting.options
+                      .filter((r) => r)
+                      .map(
+                          (r) =>
+                              `<option ${(value || setting.value) === r ? 'selected="selected"' : ''} value="${r}">${r}</option>`
+                      )
+                      .join('\n')
+                : '';
+            return settingsItemHTML
+                .replace('{NAME}', title)
+                .replace('{DESCRIPTION}', description)
+                .replace(
+                    '{INPUT}',
+                    selectHTML
+                        .replace(/{ID}/gm, setting.uniqueID)
+                        .replace('{ADDON}', `ucs t="${setting.type}"`)
+                        .replace('{OPTIONS}', options)
+                );
+        }
+    }
+
+    return '';
+}
+
+export function parseSettings(
+    settings: ISettings[],
+    folderName: string
+): string | Error {
+    let html = `<h2 class="ms-title"><span>Settings</span><span>«${decodeURI(folderName)}»</span></h2><div class="m-scroll">`;
+    for (let i = 0; i < settings.length; i++) {
+        const setting = settings[i];
+
+        if (setting.uniqueID === undefined || setting.uniqueID === null) {
+            continue;
+        }
+
+        html += createSetting(setting, setting.value);
+    }
+
+    html += '</div>'; // close scroll div
+
+    html += `<div class="ms-btns flexer si-btn">
+        <button class="button update-settings-button flexer" n="${decodeURI(folderName)}"><span>Update settings</span></button>
+        <button class="button cancel-button flexer"><span>Cancel</span></button>
+    </div>`;
+    return html;
+}
+
+export function saveSettings(folderName: string, payload: bodyPayload[]) {
+    const result = parseCounterSettings(
+        folderName,
+        'user/save',
+        payload as any
+    );
+    if (result instanceof Error) {
+        return result;
+    }
+
+    fs.writeFileSync(
+        result.settingsValuesPath,
+        JSON.stringify(result.values),
+        'utf8'
+    );
+    return true;
+}
+
 function rebuildJSON({
     array,
     external,
     query
 }: {
-    array: {
-        folderName: string;
-        name: string;
-        author: string;
-        resolution: number[];
-        authorlinks: string[];
-
-        usecase?: string;
-        compatiblewith?: string;
-        assets?: {
-            type: string;
-            url: string;
-        }[];
-        downloadLink?: string;
-    }[];
+    array: ICounter[];
     external?: boolean;
     query?: string;
 }) {
@@ -110,116 +274,146 @@ function rebuildJSON({
     for (let i = 0; i < array.length; i++) {
         const item = array[i];
 
-        if (query != null) {
-            if (
-                !(
-                    item.name.toLowerCase().includes(query) ||
-                    item.name.toLowerCase().includes(query)
-                )
-            ) {
-                continue;
+        try {
+            if (query != null) {
+                if (
+                    !(
+                        item.name.toLowerCase().includes(query) ||
+                        item.name.toLowerCase().includes(query)
+                    )
+                ) {
+                    continue;
+                }
             }
-        }
 
-        const name = nameHTML.replace('{NAME}', item.name);
-        const author = authorHTML.replace('{AUTHOR}', item.author);
+            if (!Array.isArray(item.settings)) item.settings = [];
 
-        const links = item.authorlinks
-            .map((r) => {
-                const domain =
-                    /:\/\/(?<domain>\S+)\//.exec(r)?.groups?.domain || '';
-                if (!domain) return null;
+            const externalHasSettings =
+                item._settings === true && external === true
+                    ? '<div class="external-exists flexer"><i class="icon-settings"></i> customisable</div>'
+                    : '';
 
-                const iconUrl = iconsImages[domain.toLowerCase()];
-                if (!iconUrl) return null;
+            const name = nameHTML
+                .replace('{NAME}', `${item.name}${externalHasSettings}`)
+                .replace('{CLASS}', 'flexer');
+            const author = authorHTML.replace('{AUTHOR}', item.author);
 
-                return authorLinksHTML
-                    .replace('{LINK}', r)
-                    .replace('{ICON_URL}', iconUrl);
-            })
-            .filter((r) => r != null)
-            .join(' ');
+            const authorlinks = Array.isArray(item.authorlinks)
+                ? item.authorlinks
+                : [];
 
-        const ip =
-            config.serverIP === '0.0.0.0' ? 'localhost' : config.serverIP;
+            const links = authorlinks
+                .map((r) => {
+                    const domain =
+                        /:\/\/(?<domain>\S+)\//.exec(r)?.groups?.domain || '';
+                    if (!domain) return null;
 
-        const iframe = iframeHTML
-            .replace(
-                '{URL}',
-                `http://${ip}:${config.serverPort}/${item.folderName}/`
-            )
-            .replace(
-                '{WIDTH}',
-                item.resolution[0] === -1
-                    ? '500px'
-                    : item.resolution[0] === -2
-                      ? '100%'
-                      : `${item.resolution[0]}px`
-            )
-            .replace(
-                '{HEIGHT}',
-                item.resolution[1] === -1 ? '500px' : `${item.resolution[1]}px`
-            );
+                    const iconUrl = iconsImages[domain.toLowerCase()];
+                    if (!iconUrl) return null;
 
-        const metadata = metadataHTML
-            .replace(
-                '{COPY_URL}',
-                `http://${config.serverIP}:${config.serverPort}/${item.folderName}/`
-            )
-            .replace('{TEXT_URL}', `/${item.folderName}/`)
-            .replace(
-                '{COPY_X}',
-                item.resolution[0] === -1 || item.resolution[0] === -2
-                    ? 'ANY'
-                    : item.resolution[0].toString()
-            )
-            .replace(
-                '{X}',
-                item.resolution[0] === -1 || item.resolution[0] === -2
-                    ? 'ANY'
-                    : item.resolution[0].toString()
-            )
-            .replace(
-                '{COPY_Y}',
-                item.resolution[1] === -1 || item.resolution[1] === -2
-                    ? 'ANY'
-                    : item.resolution[1].toString()
-            )
-            .replace(
-                '{Y}',
-                item.resolution[1] === -1 || item.resolution[1] === -2
-                    ? 'ANY'
-                    : item.resolution[1].toString()
-            );
+                    return authorLinksHTML
+                        .replace('{LINK}', r)
+                        .replace('{ICON_URL}', iconUrl);
+                })
+                .filter((r) => r != null)
+                .join(' ');
 
-        const button = item.downloadLink
-            ? `<div class="buttons-group indent-left"><button class="button dl-button flexer" l="${item.downloadLink}" n="${item.name}" a="${item.author}"><span>Download</span></button></div>`
-            : `<div class="buttons-group flexer indent-left">
-                <button class="button open-button flexer" n="${item.name}" a="${item.author}"><span>Open Folder</span></button>
-                <button class="button delete-button flexer" n="${item.name}" a="${item.author}"><span>Delete</span></button>
+            const ip =
+                config.serverIP === '0.0.0.0' ? 'localhost' : config.serverIP;
+
+            const iframe = iframeHTML
+                .replace(
+                    '{URL}',
+                    `http://${ip}:${config.serverPort}/${item.folderName}/`
+                )
+                .replace(
+                    '{WIDTH}',
+                    item.resolution[0] === -1
+                        ? '500px'
+                        : item.resolution[0] === -2
+                          ? '100%'
+                          : `${item.resolution[0]}px`
+                )
+                .replace(
+                    '{HEIGHT}',
+                    item.resolution[1] === -1
+                        ? '500px'
+                        : `${item.resolution[1]}px`
+                )
+                .replace('{NAME}', item.folderName);
+
+            const metadata = metadataHTML
+                .replace(
+                    '{COPY_URL}',
+                    `http://${config.serverIP}:${config.serverPort}/${item.folderName}/`
+                )
+                .replace('{TEXT_URL}', `/${item.folderName}/`)
+                .replace(
+                    '{COPY_X}',
+                    item.resolution[0] === -1 || item.resolution[0] === -2
+                        ? 'ANY'
+                        : item.resolution[0].toString()
+                )
+                .replace(
+                    '{X}',
+                    item.resolution[0] === -1 || item.resolution[0] === -2
+                        ? 'ANY'
+                        : item.resolution[0].toString()
+                )
+                .replace(
+                    '{COPY_Y}',
+                    item.resolution[1] === -1 || item.resolution[1] === -2
+                        ? 'ANY'
+                        : item.resolution[1].toString()
+                )
+                .replace(
+                    '{Y}',
+                    item.resolution[1] === -1 || item.resolution[1] === -2
+                        ? 'ANY'
+                        : item.resolution[1].toString()
+                );
+
+            const settingsBuilderBtn = `<button class="button settings-builder-button flexer" n="${item.folderName}"><i class="icon-builder"></i></button>`;
+
+            const settingsBtn =
+                item.settings.length > 0
+                    ? `<button class="button settings-button flexer" n="${item.folderName}"><span>Settings</span></button>`
+                    : '';
+
+            const button = item.downloadLink
+                ? `<div class="buttons-group indent-left"><button class="button dl-button flexer" l="${item.downloadLink}" n="${item.name}" a="${item.author}"><span>Download</span></button></div>`
+                : `<div class="buttons-group flexer indent-left">
+                ${settingsBuilderBtn}
+                ${settingsBtn}
+                <button class="button open-button flexer" n="${item.folderName}"><span>Open Folder</span></button>
+                <button class="button delete-button flexer" n="${item.folderName}"><span>Delete</span></button>
             </div>`;
 
-        const assets = (item.assets || [])
-            .map((r) => {
-                return galleryImageHTML.replace('{LINK}', r.url);
-            })
-            .filter((r) => r != null)
-            .join(' ');
+            const assets = (item.assets || [])
+                .map((r) => {
+                    return galleryImageHTML.replace('{LINK}', r.url);
+                })
+                .filter((r) => r != null)
+                .join(' ');
 
-        const gallery = item.assets ? assets : iframe;
+            const gallery = item.assets ? assets : iframe;
 
-        const footer =
-            external !== true
-                ? `<div class="ri-footer flexer">${metadata}</div>`
-                : '';
+            const footer =
+                external !== true
+                    ? `<div class="ri-footer flexer">${metadata}</div>`
+                    : '';
 
-        items += resultItemHTML
-            .replace('{NAME}', name)
-            .replace('{AUTHOR}', author)
-            .replace('{AUTHOR_LINKS}', links)
-            .replace('{BUTTONS}', button)
-            .replace('{GALLERY}', gallery)
-            .replace('{FOOTER}', footer);
+            items += resultItemHTML
+                .replace('{NAME}', name)
+                .replace('{AUTHOR}', author)
+                .replace('{AUTHOR_LINKS}', links)
+                .replace('{BUTTONS}', button)
+                .replace('{GALLERY}', gallery)
+                .replace('{FOOTER}', footer);
+        } catch (error) {
+            wLogger.error(`rebuild(${item.name})`, (error as any).message);
+            wLogger.debug(error);
+        }
     }
 
     return items;
@@ -227,16 +421,17 @@ function rebuildJSON({
 
 function getLocalCounters() {
     try {
-        const staticPath =
-            config.staticFolderPath || path.join(pkgRunningFolder, 'static');
+        const staticPath = getStaticPath();
 
         const countersListTXT = recursiveFilesSearch({
+            _ignoreFileName: 'ignore.txt',
             dir: staticPath,
             fileList: [],
             filename: 'metadata.txt'
         });
 
         const countersListHTML = recursiveFilesSearch({
+            _ignoreFileName: 'ignore.txt',
             dir: staticPath,
             fileList: [],
             filename: 'index.html'
@@ -251,10 +446,21 @@ function getLocalCounters() {
                 );
             })
             .map((r) => {
-                const staticPath = path.resolve(config.staticFolderPath);
                 const nestedFolderPath = path.dirname(
                     r.replace(staticPath, '')
                 );
+                const folderName = nestedFolderPath
+                    .replace(/^(\\\\\\|\\\\|\\|\/|\/\/)/, '')
+                    .replace(/\\/gm, '/');
+
+                const settingsPath = path.join(
+                    staticPath,
+                    folderName,
+                    'settings.json'
+                );
+                const settings = fs.existsSync(settingsPath)
+                    ? JsonSafeParse(fs.readFileSync(settingsPath, 'utf8'), [])
+                    : [];
 
                 return {
                     folderName: nestedFolderPath
@@ -263,14 +469,16 @@ function getLocalCounters() {
                     name: path.basename(path.dirname(r)),
                     author: 'local',
                     resolution: [-2, '400'],
-                    authorlinks: []
-                };
+                    authorlinks: [],
+                    settings: Array.isArray(settings) ? settings : []
+                } as ICounter;
             });
 
         const array = countersListTXT.map((r) => parseTXT(r));
         return array.concat(arrayOfLocal).filter((r) => r.name !== '');
     } catch (error) {
         wLogger.error((error as any).message);
+        wLogger.debug(error);
         return [];
     }
 }
@@ -299,9 +507,18 @@ export function buildLocalCounters(res: http.ServerResponse, query?: string) {
                 res.writeHead(404, {
                     'Content-Type': 'text/html'
                 });
+
                 res.end('<html>page not found</html>');
+                return;
             }
-            const html = content.replace('{{LIST}}', build || emptyNotice);
+
+            let html = content.replace('{{LIST}}', build || emptyNotice);
+            if (semver.gt(config.updateVersion, config.currentVersion)) {
+                html = html
+                    .replace('{OLD}', config.currentVersion)
+                    .replace('{NEW}', config.updateVersion)
+                    .replace('update-available hidden', 'update-available');
+            }
 
             res.writeHead(200, {
                 'Content-Type': getContentType('file.html')
@@ -315,27 +532,44 @@ export async function buildExternalCounters(
     res: http.ServerResponse,
     query?: string
 ) {
-    const request = await fetch(
-        'https://raw.githubusercontent.com/cyperdark/osu-counters/master/.github/api.json'
-    );
-    const json: any = await request.json();
+    let text = '';
 
-    const exists = getLocalCounters();
-    const array = json.filter(
-        (r) => !exists.find((s) => s.name === r.name && s.author === r.author)
-    );
+    try {
+        const request = await fetch('https://osuck.net/tosu/api.json');
+        const json: any = await request.json();
 
-    const build = rebuildJSON({
-        array,
-        external: true,
-        query
-    });
+        const exists = getLocalCounters();
+        const array = json.filter(
+            (r) =>
+                !exists.find((s) => s.name === r.name && s.author === r.author)
+        );
 
-    if (query != null) {
-        res.writeHead(200, {
-            'Content-Type': getContentType('file.html')
+        const build = rebuildJSON({
+            array,
+            external: true,
+            query
         });
-        return res.end(build || emptyCounters);
+
+        if (query != null) {
+            res.writeHead(200, {
+                'Content-Type': getContentType('file.html')
+            });
+            return res.end(build || emptyCounters);
+        }
+
+        text = build;
+    } catch (error) {
+        wLogger.error((error as any).message);
+        wLogger.debug(error);
+
+        if (query != null) {
+            res.writeHead(200, {
+                'Content-Type': getContentType('file.html')
+            });
+            return res.end((error as any).message || emptyCounters);
+        }
+
+        text = `Error: ${(error as any).message}`;
     }
 
     fs.readFile(
@@ -347,9 +581,21 @@ export async function buildExternalCounters(
                 res.writeHead(404, {
                     'Content-Type': 'text/html'
                 });
+
                 res.end('<html>page not found</html>');
+                return;
             }
-            const html = content.replace('{{LIST}}', build || noMoreCounters);
+
+            let responseHTML = submitCounterHTML;
+            responseHTML += text || noMoreCounters;
+
+            let html = content.replace('{{LIST}}', responseHTML);
+            if (semver.gt(config.updateVersion, config.currentVersion)) {
+                html = html
+                    .replace('{OLD}', config.currentVersion)
+                    .replace('{NEW}', config.updateVersion)
+                    .replace('update-available hidden', 'update-available');
+            }
 
             res.writeHead(200, {
                 'Content-Type': getContentType('file.html')
@@ -369,7 +615,7 @@ export function buildSettings(res: http.ServerResponse) {
         .replace(
             '{INPUT}',
             checkboxHTML
-                .replace(/{NAME}/gm, 'DEBUG_LOG')
+                .replace(/{ID}/gm, 'DEBUG_LOG')
                 .replace('{ADDON}', config.debugLogging ? 'checked="true"' : '')
                 .replace('{VALUE}', `${config.debugLogging}`)
         );
@@ -383,7 +629,7 @@ export function buildSettings(res: http.ServerResponse) {
         .replace(
             '{INPUT}',
             checkboxHTML
-                .replace(/{NAME}/gm, 'CALCULATE_PP')
+                .replace(/{ID}/gm, 'CALCULATE_PP')
                 .replace('{ADDON}', config.calculatePP ? 'checked="true"' : '')
                 .replace('{VALUE}', `${config.calculatePP}`)
         );
@@ -397,7 +643,7 @@ export function buildSettings(res: http.ServerResponse) {
         .replace(
             '{INPUT}',
             checkboxHTML
-                .replace(/{NAME}/gm, 'ENABLE_KEY_OVERLAY')
+                .replace(/{ID}/gm, 'ENABLE_KEY_OVERLAY')
                 .replace(
                     '{ADDON}',
                     config.enableKeyOverlay ? 'checked="true"' : ''
@@ -414,7 +660,7 @@ export function buildSettings(res: http.ServerResponse) {
         .replace(
             '{INPUT}',
             checkboxHTML
-                .replace(/{NAME}/gm, 'ENABLE_GOSU_OVERLAY')
+                .replace(/{ID}/gm, 'ENABLE_GOSU_OVERLAY')
                 .replace(
                     '{ADDON}',
                     config.enableGosuOverlay ? 'checked="true"' : ''
@@ -432,7 +678,7 @@ export function buildSettings(res: http.ServerResponse) {
             '{INPUT}',
             inputHTML
                 .replace('{TYPE}', 'number')
-                .replace(/{NAME}/gm, 'POLL_RATE')
+                .replace(/{ID}/gm, 'POLL_RATE')
                 .replace('{ADDON}', config.pollRate ? 'min="0"' : '')
                 .replace('{VALUE}', `${config.pollRate}`)
         );
@@ -447,9 +693,40 @@ export function buildSettings(res: http.ServerResponse) {
             '{INPUT}',
             inputHTML
                 .replace('{TYPE}', 'number')
-                .replace(/{NAME}/gm, 'PRECISE_DATA_POLL_RATE')
+                .replace(/{ID}/gm, 'PRECISE_DATA_POLL_RATE')
                 .replace('{ADDON}', config.preciseDataPollRate ? 'min="0"' : '')
                 .replace('{VALUE}', `${config.preciseDataPollRate}`)
+        );
+
+    const enableAutoUpdateHtml = settingsItemHTML
+        .replace('{NAME}', 'ENABLE_AUTOUPDATE')
+        .replace(
+            '{DESCRIPTION}',
+            'Enable checking and updating tosu on startup'
+        )
+        .replace(
+            '{INPUT}',
+            checkboxHTML
+                .replace(/{ID}/gm, 'ENABLE_AUTOUPDATE')
+                .replace(
+                    '{ADDON}',
+                    config.enableAutoUpdate ? 'checked="true"' : ''
+                )
+                .replace('{VALUE}', `${config.enableAutoUpdate}`)
+        );
+
+    const openDashboardOnStartupHtml = settingsItemHTML
+        .replace('{NAME}', 'OPEN_DASHBOARD_ON_STARTUP')
+        .replace('{DESCRIPTION}', 'Open dashboard in browser on startup')
+        .replace(
+            '{INPUT}',
+            checkboxHTML
+                .replace(/{ID}/gm, 'OPEN_DASHBOARD_ON_STARTUP')
+                .replace(
+                    '{ADDON}',
+                    config.openDashboardOnStartup ? 'checked="true"' : ''
+                )
+                .replace('{VALUE}', `${config.openDashboardOnStartup}`)
         );
 
     const serverIPHTML = settingsItemHTML
@@ -459,7 +736,7 @@ export function buildSettings(res: http.ServerResponse) {
             '{INPUT}',
             inputHTML
                 .replace('{TYPE}', 'text')
-                .replace(/{NAME}/gm, 'SERVER_IP')
+                .replace(/{ID}/gm, 'SERVER_IP')
                 .replace('{ADDON}', config.serverIP ? 'min="0"' : '')
                 .replace('{VALUE}', `${config.serverIP}`)
         );
@@ -471,7 +748,7 @@ export function buildSettings(res: http.ServerResponse) {
             '{INPUT}',
             inputHTML
                 .replace('{TYPE}', 'number')
-                .replace(/{NAME}/gm, 'SERVER_PORT')
+                .replace(/{ID}/gm, 'SERVER_PORT')
                 .replace('{ADDON}', config.serverPort ? 'min="0"' : '')
                 .replace('{VALUE}', `${config.serverPort}`)
         );
@@ -483,27 +760,58 @@ export function buildSettings(res: http.ServerResponse) {
             '{INPUT}',
             inputHTML
                 .replace('{TYPE}', 'text')
-                .replace(/{NAME}/gm, 'STATIC_FOLDER_PATH')
+                .replace(/{ID}/gm, 'STATIC_FOLDER_PATH')
                 .replace('{ADDON}', config.staticFolderPath ? 'min="0"' : '')
                 .replace('{VALUE}', `${config.staticFolderPath}`)
         );
 
+    const showMpCommandsHTML = settingsItemHTML
+        .replace('{NAME}', 'SHOW_MP_COMMANDS')
+        .replace(
+            '{DESCRIPTION}',
+            `Shows !mp commands (messages starting with '!mp') in tournament manager chat (hidden by default)`
+        )
+        .replace(
+            '{INPUT}',
+            checkboxHTML
+                .replace(/{ID}/gm, 'SHOW_MP_COMMANDS')
+                .replace(
+                    '{ADDON}',
+                    config.showMpCommands ? 'checked="true"' : ''
+                )
+                .replace('{VALUE}', `${config.showMpCommands}`)
+        );
+
     const settings = `<div class="settings">
     ${debugHTML}
-    ${calculatePPHTML}
-    ${enableKeyOverlayHTML}
+    <div></div>
+    <div></div>
+    ${enableAutoUpdateHtml}
+    ${openDashboardOnStartupHtml}
+    <div></div>
+    <div></div>
     ${enableGosuOverlayHTML}
+    ${enableKeyOverlayHTML}
+    <div></div>
+    <div></div>
+    ${calculatePPHTML}
+    ${showMpCommandsHTML}
+    <div></div>
+    <div></div>
     ${pollRateHTML}
     ${preciseDataPollRateHTML}
+    <div></div>
+    <div></div>
     ${serverIPHTML}
     ${serverPortHTML}
+    <div></div>
+    <div></div>
     ${staticFolderPathtHTML}
     ${saveSettingsButtonHTML}
     </div>`;
 
     fs.readFile(
         path.join(pkgAssetsPath, 'homepage.html'),
-        // '../assets/homepage.html',
         'utf8',
         (err, content) => {
             if (err) {
@@ -511,9 +819,18 @@ export function buildSettings(res: http.ServerResponse) {
                 res.writeHead(404, {
                     'Content-Type': 'text/html'
                 });
+
                 res.end('<html>page not found</html>');
+                return;
             }
-            const html = content.replace('{{LIST}}', settings);
+
+            let html = content.replace('{{LIST}}', settings);
+            if (semver.gt(config.updateVersion, config.currentVersion)) {
+                html = html
+                    .replace('{OLD}', config.currentVersion)
+                    .replace('{NEW}', config.updateVersion)
+                    .replace('update-available hidden', 'update-available');
+            }
 
             res.writeHead(200, {
                 'Content-Type': getContentType('file.html')
@@ -544,9 +861,18 @@ export function buildInstructionLocal(res: http.ServerResponse) {
                 res.writeHead(404, {
                     'Content-Type': 'text/html'
                 });
+
                 res.end('<html>page not found</html>');
+                return;
             }
-            const html = content.replace('{{LIST}}', pageContent);
+
+            let html = content.replace('{{LIST}}', pageContent);
+            if (semver.gt(config.updateVersion, config.currentVersion)) {
+                html = html
+                    .replace('{OLD}', config.currentVersion)
+                    .replace('{NEW}', config.updateVersion)
+                    .replace('update-available hidden', 'update-available');
+            }
 
             res.writeHead(200, {
                 'Content-Type': getContentType('file.html')

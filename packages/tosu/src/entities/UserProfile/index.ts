@@ -1,6 +1,6 @@
 import { wLogger } from '@tosu/common';
 
-import { AbstractEntity } from '../AbstractEntity';
+import { AbstractEntity } from '@/entities/AbstractEntity';
 
 export class UserProfile extends AbstractEntity {
     name: string;
@@ -19,7 +19,7 @@ export class UserProfile extends AbstractEntity {
 
     updateState() {
         try {
-            const { patterns, process } = this.services.getServices([
+            const { patterns, process } = this.osuInstance.getServices([
                 'patterns',
                 'process'
             ]);
@@ -47,8 +47,14 @@ export class UserProfile extends AbstractEntity {
             this.performancePoints = process.readShort(profileBase + 0x9c);
             // ARGB, to convert use UserProfile.backgroundColour.toString(16)
             this.backgroundColour = process.readUInt(profileBase + 0xac);
+
+            this.resetReportCount('UP(updateState)');
         } catch (exc) {
-            wLogger.error(`UP(updateState) ${(exc as any).message}`);
+            this.reportError(
+                'UP(updateState)',
+                10,
+                `UP(updateState) ${(exc as any).message}`
+            );
             wLogger.debug(exc);
         }
     }

@@ -6,14 +6,12 @@ import path from 'path';
 import { Process } from 'tsprocess/dist/process';
 
 import { buildResult } from '@/api/utils/buildResult';
-import {
-    buildPreciseResult,
-    buildResult as buildResultV2
-} from '@/api/utils/buildResultV2';
+import { buildResult as buildResultV2 } from '@/api/utils/buildResultV2';
+import { buildResult as buildResultV2Precise } from '@/api/utils/buildResultV2Precise';
 import { AllTimesData } from '@/entities/AllTimesData';
 import { BassDensityData } from '@/entities/BassDensityData';
 import { BeatmapPPData } from '@/entities/BeatmapPpData';
-import { DataRepo } from '@/entities/DataRepoList';
+import { DataRepo, DataRepoList } from '@/entities/DataRepoList';
 import { GamePlayData } from '@/entities/GamePlayData';
 import { MenuData } from '@/entities/MenuData';
 import { ResultsScreenData } from '@/entities/ResultsScreenData';
@@ -74,16 +72,12 @@ const SCAN_PATTERNS: {
         offset: 0x7
     },
     userProfilePtr: {
-        pattern: 'A1 ?? ?? ?? ?? 89 85 ?? ?? ?? ?? 6A 00 6A 00 8D 8D',
-        offset: 0x1
+        pattern: 'FF 15 ?? ?? ?? ?? A1 ?? ?? ?? ?? 8B 48 54 33 D2',
+        offset: 0x7
     },
     rawLoginStatusPtr: {
         pattern: 'B8 0B 00 00 8B 35',
         offset: -0xb
-    },
-    gameTimePtr: {
-        pattern: 'FF 15 ?? ?? ?? ?? A1 ?? ?? ?? ?? 8B 15 ?? ?? ?? ?? 3B',
-        offset: 0x7
     },
     spectatingUserPtr: {
         pattern: '8B 0D ?? ?? ?? ?? 85 C0 74 05 8B 50 30',
@@ -121,28 +115,19 @@ export class OsuInstance {
 
         this.entities.set('process', this.process);
         this.entities.set('patterns', new MemoryPatterns());
-        this.entities.set('settings', new Settings());
-        this.entities.set('allTimesData', new AllTimesData(this.entities));
-        this.entities.set('beatmapPpData', new BeatmapPPData(this.entities));
-        this.entities.set('menuData', new MenuData(this.entities));
-        this.entities.set(
-            'bassDensityData',
-            new BassDensityData(this.entities)
-        );
-        this.entities.set('gamePlayData', new GamePlayData(this.entities));
-        this.entities.set(
-            'resultsScreenData',
-            new ResultsScreenData(this.entities)
-        );
+        this.entities.set('settings', new Settings(this));
+        this.entities.set('allTimesData', new AllTimesData(this));
+        this.entities.set('beatmapPpData', new BeatmapPPData(this));
+        this.entities.set('menuData', new MenuData(this));
+        this.entities.set('bassDensityData', new BassDensityData(this));
+        this.entities.set('gamePlayData', new GamePlayData(this));
+        this.entities.set('resultsScreenData', new ResultsScreenData(this));
         this.entities.set(
             'tourneyUserProfileData',
-            new TourneyUserProfileData(this.entities)
+            new TourneyUserProfileData(this)
         );
-        this.entities.set(
-            'tourneyManagerData',
-            new TourneyManagerData(this.entities)
-        );
-        this.entities.set('userProfile', new UserProfile(this.entities));
+        this.entities.set('tourneyManagerData', new TourneyManagerData(this));
+        this.entities.set('userProfile', new UserProfile(this));
 
         this.watchProcessHealth = this.watchProcessHealth.bind(this);
         this.updateMapMetadata = this.updateMapMetadata.bind(this);
@@ -249,7 +234,7 @@ export class OsuInstance {
             tourneyUserProfileData,
             tourneyManagerData,
             userProfile
-        } = this.entities.getServices([
+        } = this.getServices([
             'allTimesData',
             'menuData',
             'bassDensityData',
@@ -265,6 +250,7 @@ export class OsuInstance {
         while (!this.isDestroyed) {
             try {
                 allTimesData.updateState();
+                settings.updateState();
                 menuData.updateState();
 
                 // osu! calculates audioTrack length a little bit after updating menuData, sooo.. lets this thing run regardless of menuData updating
@@ -272,24 +258,24 @@ export class OsuInstance {
                     menuData.updateMP3Length();
                 }
 
-                if (!settings.gameFolder) {
-                    settings.setGameFolder(path.join(this.path, '..'));
+                if (!allTimesData.GameFolder) {
+                    allTimesData.setGameFolder(path.join(this.path, '..'));
 
                     // condition when user have different BeatmapDirectory in osu! config
-                    if (fs.existsSync(allTimesData.SongsFolder)) {
-                        settings.setSongsFolder(allTimesData.SongsFolder);
+                    if (fs.existsSync(allTimesData.MemorySongsFolder)) {
+                        allTimesData.setSongsFolder(
+                            allTimesData.MemorySongsFolder
+                        );
                     } else {
-                        settings.setSongsFolder(
+                        allTimesData.setSongsFolder(
                             path.join(
                                 this.path,
                                 '../',
-                                allTimesData.SongsFolder
+                                allTimesData.MemorySongsFolder
                             )
                         );
                     }
                 }
-
-                settings.setSkinFolder(path.join(allTimesData.SkinFolder));
 
                 switch (allTimesData.Status) {
                     case 0:
@@ -369,7 +355,7 @@ export class OsuInstance {
     initHighRateData() {
         wLogger.debug('OI(updatePreciseData) starting');
 
-        const { allTimesData, gamePlayData } = this.entities.getServices([
+        const { allTimesData, gamePlayData } = this.getServices([
             'allTimesData',
             'gamePlayData'
         ]);
@@ -404,10 +390,9 @@ export class OsuInstance {
     initMapMetadata() {
         wLogger.debug('OI(updateMapMetadata) Starting');
 
-        const entities = this.entities.getServices([
+        const entities = this.getServices([
             'menuData',
             'allTimesData',
-            'settings',
             'gamePlayData',
             'beatmapPpData'
         ]);
@@ -418,17 +403,10 @@ export class OsuInstance {
     updateMapMetadata(entries: {
         menuData: MenuData;
         allTimesData: AllTimesData;
-        settings: Settings;
         gamePlayData: GamePlayData;
         beatmapPpData: BeatmapPPData;
     }) {
-        const {
-            menuData,
-            allTimesData,
-            settings,
-            gamePlayData,
-            beatmapPpData
-        } = entries;
+        const { menuData, allTimesData, gamePlayData, beatmapPpData } = entries;
         const currentMods =
             allTimesData.Status === 2 || allTimesData.Status === 7
                 ? gamePlayData.Mods
@@ -438,19 +416,11 @@ export class OsuInstance {
 
         if (
             menuData.Path?.endsWith('.osu') &&
-            settings.gameFolder &&
+            allTimesData.GameFolder &&
             this.previousState !== currentState
         ) {
             this.previousState = currentState;
-
-            try {
-                beatmapPpData.updateMapMetadata(currentMods);
-            } catch (exc) {
-                wLogger.error(
-                    "OI(updateMapMetadata) Can't update beatmap metadata"
-                );
-                wLogger.debug(exc);
-            }
+            beatmapPpData.updateMapMetadata(currentMods);
         }
 
         setTimeout(() => {
@@ -463,7 +433,7 @@ export class OsuInstance {
 
         if (!Process.isProcessExist(this.process.handle)) {
             this.isDestroyed = true;
-            wLogger.info(
+            wLogger.warn(
                 `OI(watchProcessHealth) osu!.exe at ${this.pid} got destroyed`
             );
             this.emitter.emit('onDestroy', this.pid);
@@ -473,14 +443,36 @@ export class OsuInstance {
     }
 
     getState(instanceManager: InstanceManager) {
-        return buildResult(this.entities, instanceManager);
+        return buildResult(instanceManager);
     }
 
     getStateV2(instanceManager: InstanceManager) {
-        return buildResultV2(this.entities, instanceManager);
+        return buildResultV2(instanceManager);
     }
 
-    getPreciseData() {
-        return buildPreciseResult(this.entities);
+    getPreciseData(instanceManager: InstanceManager) {
+        return buildResultV2Precise(instanceManager);
+    }
+
+    /**
+     * Returns map of requested services\
+     * Throws if any of requested services is not currently present
+     */
+    getServices<T extends (keyof DataRepoList)[]>(
+        services: T
+    ): Pick<DataRepoList, T[number]> | never {
+        return services.reduce(
+            (acc, item: keyof Pick<DataRepoList, T[number]>) => {
+                const instance = this.entities.get(item);
+                if (!instance || instance === null) {
+                    throw new Error(
+                        `Service "${item}" was not set in DataRepo list`
+                    );
+                }
+                acc[item] = instance as never;
+                return acc;
+            },
+            {} as Pick<DataRepoList, T[number]>
+        );
     }
 }

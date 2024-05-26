@@ -1,6 +1,6 @@
 import { wLogger } from '@tosu/common';
 
-import { AbstractEntity } from '../AbstractEntity';
+import { AbstractEntity } from '@/entities/AbstractEntity';
 
 export class MenuData extends AbstractEntity {
     Status: number;
@@ -30,11 +30,9 @@ export class MenuData extends AbstractEntity {
 
     previousMD5: string = '';
 
-    private mp3ErrorAttempts: number = 0;
-
     updateState() {
         try {
-            const { process, patterns } = this.services.getServices([
+            const { process, patterns } = this.osuInstance.getServices([
                 'process',
                 'patterns'
             ]);
@@ -126,15 +124,21 @@ export class MenuData extends AbstractEntity {
             this.ObjectCount = process.readInt(beatmapAddr + 0xf8);
 
             this.previousMD5 = this.MD5;
+
+            this.resetReportCount('MB(updateState)');
         } catch (exc) {
-            wLogger.error(`MB(updateState) ${(exc as any).message}`);
+            this.reportError(
+                'MB(updateState)',
+                10,
+                `MB(updateState) ${(exc as any).message}`
+            );
             wLogger.debug(exc);
         }
     }
 
     updateMP3Length() {
         try {
-            const { process, patterns } = this.services.getServices([
+            const { process, patterns } = this.osuInstance.getServices([
                 'process',
                 'patterns'
             ]);
@@ -148,15 +152,13 @@ export class MenuData extends AbstractEntity {
                 )
             );
 
-            this.mp3ErrorAttempts = 0;
+            this.resetReportCount('MB(updateMP3Length)');
         } catch (exc) {
-            this.mp3ErrorAttempts += 1;
-
-            if (this.mp3ErrorAttempts > 5) {
-                wLogger.error(
-                    'Unable to parse beatmap mp3 length (you can ignore it)'
-                );
-            }
+            this.reportError(
+                'MB(updateMP3Length)',
+                10,
+                `MB(updateMP3Length) ${(exc as any).message}`
+            );
             wLogger.debug(exc);
         }
     }

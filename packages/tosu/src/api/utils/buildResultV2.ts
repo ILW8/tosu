@@ -1,14 +1,7 @@
 import path from 'path';
 
-import { DataRepo } from '@/entities/DataRepoList';
-import { LeaderboardPlayer as MemoryLeaderboardPlayer } from '@/entities/GamePlayData/Leaderboard';
-import { InstanceManager } from '@/objects/instanceManager/instanceManager';
-import { calculateAccuracy, calculateGrade } from '@/utils/calculators';
-import { fixDecimals } from '@/utils/converters';
-import { getOsuModsString } from '@/utils/osuMods';
-
 import {
-    ApiV2Answer,
+    ApiAnswer,
     BanchoStatusEnum,
     BeatmapStatuses,
     ChatStatus,
@@ -17,7 +10,6 @@ import {
     Leaderboard,
     LeaderboardType,
     Modes,
-    PreciseApiAnswer,
     ProgressBarType,
     ScoreMeterType,
     SortType,
@@ -25,7 +17,13 @@ import {
     TourneyChatMessages,
     TourneyClients,
     UserLoginStatus
-} from '../types/v2';
+} from '@/api/types/v2';
+import { LeaderboardPlayer as MemoryLeaderboardPlayer } from '@/entities/GamePlayData/Leaderboard';
+import { InstanceManager } from '@/objects/instanceManager/instanceManager';
+import { calculateAccuracy, calculateGrade } from '@/utils/calculators';
+import { fixDecimals } from '@/utils/converters';
+import { getOsuModsString } from '@/utils/osuMods';
+
 import { CountryCodes } from './countryCodes';
 
 const convertMemoryPlayerToResult = (
@@ -72,10 +70,12 @@ const convertMemoryPlayerToResult = (
     };
 };
 
-export const buildResult = (
-    service: DataRepo,
-    instanceManager: InstanceManager
-): ApiV2Answer => {
+export const buildResult = (instanceManager: InstanceManager): ApiAnswer => {
+    const osuInstance = instanceManager.getInstance();
+    if (!osuInstance) {
+        return { error: 'not_ready' };
+    }
+
     const {
         settings,
         bassDensityData,
@@ -85,7 +85,7 @@ export const buildResult = (
         resultsScreenData,
         beatmapPpData,
         userProfile
-    } = service.getServices([
+    } = osuInstance.getServices([
         'settings',
         'bassDensityData',
         'allTimesData',
@@ -101,10 +101,19 @@ export const buildResult = (
             ? gamePlayData.Mods
             : allTimesData.MenuMods;
 
+    const resultScreenHits = {
+        300: resultsScreenData.Hit300,
+        geki: resultsScreenData.HitGeki,
+        100: resultsScreenData.Hit100,
+        katu: resultsScreenData.HitKatu,
+        50: resultsScreenData.Hit50,
+        0: resultsScreenData.HitMiss
+    };
+
     return {
         state: {
             number: allTimesData.Status,
-            name: GameState[allTimesData.Status]
+            name: GameState[allTimesData.Status] || ''
         },
         session: {
             playTime: allTimesData.GameTime,
@@ -115,7 +124,7 @@ export const buildResult = (
             replayUIVisible: gamePlayData.isReplayUiHidden === false,
             chatVisibilityStatus: {
                 number: allTimesData.ChatStatus,
-                name: ChatStatus[allTimesData.ChatStatus]
+                name: ChatStatus[allTimesData.ChatStatus] || ''
             },
 
             leaderboard: {
@@ -124,13 +133,13 @@ export const buildResult = (
                     : false,
                 type: {
                     number: settings.leaderboardType,
-                    name: LeaderboardType[settings.leaderboardType]
+                    name: LeaderboardType[settings.leaderboardType] || ''
                 }
             },
 
             progressBar: {
                 number: settings.progressBarType,
-                name: ProgressBarType[settings.progressBarType]
+                name: ProgressBarType[settings.progressBarType] || ''
             },
             bassDensity: bassDensityData.density,
 
@@ -140,7 +149,7 @@ export const buildResult = (
             scoreMeter: {
                 type: {
                     number: settings.scoreMeter.type,
-                    name: ScoreMeterType[settings.scoreMeter.type]
+                    name: ScoreMeterType[settings.scoreMeter.type] || ''
                 },
                 size: settings.scoreMeter.size
             },
@@ -150,22 +159,19 @@ export const buildResult = (
 
             sort: {
                 number: settings.sortType,
-                name: SortType[settings.sortType]
+                name: SortType[settings.sortType] || ''
             },
             group: {
                 number: settings.groupType,
-                name: GroupType[settings.groupType]
+                name: GroupType[settings.groupType] || ''
             },
 
             skin: settings.skin,
             mode: {
                 number: menuData.MenuGameMode,
-                name: Modes[menuData.MenuGameMode]
+                name: Modes[menuData.MenuGameMode] || ''
             },
-            audio: {
-                ...settings.audio,
-                offset: settings.offset
-            },
+            audio: settings.audio,
             background: settings.background,
 
             keybinds: settings.keybinds
@@ -173,17 +179,17 @@ export const buildResult = (
         profile: {
             userStatus: {
                 number: userProfile.rawLoginStatus,
-                name: UserLoginStatus[userProfile.rawLoginStatus]
+                name: UserLoginStatus[userProfile.rawLoginStatus] || ''
             },
             banchoStatus: {
                 number: userProfile.rawBanchoStatus,
-                name: BanchoStatusEnum[userProfile.rawBanchoStatus]
+                name: BanchoStatusEnum[userProfile.rawBanchoStatus] || ''
             },
             id: userProfile.id,
             name: userProfile.name,
             mode: {
                 number: userProfile.playMode,
-                name: Modes[userProfile.playMode]
+                name: Modes[userProfile.playMode] || ''
             },
 
             rankedScore: userProfile.rankedScore,
@@ -210,7 +216,7 @@ export const buildResult = (
             },
             status: {
                 number: menuData.RankedStatus,
-                name: BeatmapStatuses[menuData.RankedStatus || -1]
+                name: BeatmapStatuses[menuData.RankedStatus || -1] || ''
             },
             checksum: menuData.MD5,
 
@@ -329,7 +335,7 @@ export const buildResult = (
 
             mode: {
                 number: gamePlayData.Mode,
-                name: Modes[gamePlayData.Mode]
+                name: Modes[gamePlayData.Mode] || ''
             },
 
             score: gamePlayData.Score,
@@ -385,18 +391,17 @@ export const buildResult = (
         resultsScreen: {
             mode: {
                 number: gamePlayData.Mode,
-                name: Modes[gamePlayData.Mode]
+                name: Modes[gamePlayData.Mode] || ''
             },
+
             score: resultsScreenData.Score,
+            accuracy: calculateAccuracy({
+                hits: resultScreenHits,
+                mode: gamePlayData.Mode
+            }),
+
             name: resultsScreenData.PlayerName,
-            hits: {
-                300: resultsScreenData.Hit300,
-                geki: resultsScreenData.HitGeki,
-                100: resultsScreenData.Hit100,
-                katu: resultsScreenData.HitKatu,
-                50: resultsScreenData.Hit50,
-                0: resultsScreenData.HitMiss
-            },
+            hits: resultScreenHits,
             mods: {
                 number: resultsScreenData.Mods,
                 name: getOsuModsString(resultsScreenData.Mods)
@@ -406,9 +411,9 @@ export const buildResult = (
             createdAt: resultsScreenData.Date
         },
         folders: {
-            game: settings.gameFolder,
-            skin: settings.skinFolder,
-            songs: settings.songsFolder,
+            game: allTimesData.GameFolder,
+            skin: allTimesData.SkinFolder,
+            songs: allTimesData.SongsFolder,
             beatmap: menuData.Folder
         },
         files: {
@@ -417,67 +422,20 @@ export const buildResult = (
             audio: menuData.AudioFilename
         },
         directPath: {
-            beatmapFile: path.join(
-                settings.gameFolder,
-                'Songs',
-                menuData.Folder,
-                menuData.Path
-            ),
+            beatmapFile: path.join(menuData.Folder || '', menuData.Path || ''),
             beatmapBackground: path.join(
-                settings.gameFolder,
-                'Songs',
-                menuData.Folder,
-                menuData.BackgroundFilename
+                menuData.Folder || '',
+                menuData.BackgroundFilename || ''
             ),
             beatmapAudio: path.join(
-                settings.gameFolder,
-                'Songs',
-                menuData.Folder,
-                menuData.AudioFilename
+                menuData.Folder || '',
+                menuData.AudioFilename || ''
             ),
-            beatmapFolder: path.join(
-                settings.gameFolder,
-                'Songs',
-                menuData.Folder
-            ),
-            skinFolder: path.join(
-                settings.gameFolder,
-                'Skins',
-                settings.skinFolder
-            ),
-
-            collections: path.join(settings.gameFolder, 'collection.db'),
-            osudb: path.join(settings.gameFolder, 'osu!.db'),
-            scoresdb: path.join(settings.gameFolder, 'scores.db')
+            beatmapFolder: menuData.Folder,
+            skinFolder: allTimesData.SkinFolder
         },
 
         tourney: buildTourneyData(instanceManager)
-    };
-};
-
-export const buildPreciseResult = (service: DataRepo): PreciseApiAnswer => {
-    const { gamePlayData } = service.getServices(['gamePlayData']);
-
-    return {
-        keys: {
-            k1: {
-                isPressed: gamePlayData.KeyOverlay.K1Pressed,
-                count: gamePlayData.KeyOverlay.K1Count
-            },
-            k2: {
-                isPressed: gamePlayData.KeyOverlay.K2Pressed,
-                count: gamePlayData.KeyOverlay.K2Count
-            },
-            m1: {
-                isPressed: gamePlayData.KeyOverlay.M1Pressed,
-                count: gamePlayData.KeyOverlay.M1Count
-            },
-            m2: {
-                isPressed: gamePlayData.KeyOverlay.M2Pressed,
-                count: gamePlayData.KeyOverlay.M2Count
-            }
-        },
-        hitErrors: gamePlayData.HitErrors
     };
 };
 
@@ -503,7 +461,7 @@ const buildTourneyData = (
                 gamePlayData,
                 tourneyUserProfileData,
                 beatmapPpData
-            } = instance.entities.getServices([
+            } = instance.getServices([
                 'allTimesData',
                 'gamePlayData',
                 'tourneyUserProfileData',
@@ -535,7 +493,7 @@ const buildTourneyData = (
 
                     mode: {
                         number: gamePlayData.Mode,
-                        name: Modes[gamePlayData.Mode]
+                        name: Modes[gamePlayData.Mode] || ''
                     },
 
                     score: gamePlayData.Score,
@@ -582,7 +540,7 @@ const buildTourneyData = (
             };
         });
 
-    const { tourneyManagerData } = osuTourneyManager[0].entities.getServices([
+    const { tourneyManagerData } = osuTourneyManager[0].getServices([
         'tourneyManagerData'
     ]);
 

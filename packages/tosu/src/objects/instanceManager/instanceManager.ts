@@ -14,6 +14,20 @@ export class InstanceManager {
         this.runWatcher = this.runWatcher.bind(this);
     }
 
+    /**
+     * Gets a regular instance if osu running in normal mode, else gets tournament manager
+     */
+    public getInstance() {
+        if (Object.keys(this.osuInstances).length === 0) return;
+
+        for (const key in this.osuInstances) {
+            if (this.osuInstances[key].isTourneyManager) {
+                return this.osuInstances[key];
+            }
+        }
+        return Object.values(this.osuInstances)[0];
+    }
+
     private onProcessDestroy(pid: number) {
         // FOOL PROTECTION
         if (!(pid in this.osuInstances)) {
@@ -35,8 +49,7 @@ export class InstanceManager {
                 const osuInstance = new OsuInstance(processId);
                 const cmdLine = osuInstance.process.getProcessCommandLine();
                 if (cmdLine.includes('-spectateclient')) {
-                    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-                    const [_, __, ipcId] = cmdLine.split(' ');
+                    const ipcId = cmdLine.split(' ').at(-2);
 
                     osuInstance.setTourneyIpcId(Number(ipcId));
                     osuInstance.setIsTourneySpectator(true);
